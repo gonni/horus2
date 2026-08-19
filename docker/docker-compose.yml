@@ -1,0 +1,75 @@
+version: '3.8'
+
+services:
+  # 1. PostgreSQL 16 (TimescaleDB + pgvector + pg_trgm)
+  postgres:
+    image: timescale/timescaledb-ha:pg16
+    container_name: horus-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-horus}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-horus_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-horus}
+      TZ: Asia/Seoul
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      # 호스트 외부 지정 디렉토리 바인드 마운트
+      - ${DOCKER_DATA_ROOT:-./data}/postgres:/home/postgres/pgdata/data
+      - ./init-db:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-horus} -d ${POSTGRES_DB:-horus}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # 2. Redis 7 (작업 큐 & 실시간 캐시)
+  redis:
+    image: redis:7-alpine
+    container_name: horus-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-horus_redis}
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - ${DOCKER_DATA_ROOT:-./data}/redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-horus_redis}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # 3. Neo4j 5 (단어 동시출현망 & 지식 그래프)
+  neo4j:
+    image: neo4j:5.20-community
+    container_name: horus-neo4j
+    restart: unless-stopped
+    environment:
+      NEO4J_AUTH: ${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-horus_graph}
+      NEO4J_PLUGINS: '["apoc"]'
+      NEO4J_dbms_security_procedures_unrestricted: apoc.*
+      NEO4J_dbms_security_procedures_allowlist: apoc.*
+      NEO4J_server_memory_heap_initial__size: 512m
+      NEO4J_server_memory_heap_max__size: 2g
+      NEO4J_server_memory_pagecache_size: 1g
+      TZ: Asia/Seoul
+    ports:
+      - "${NEO4J_HTTP_PORT:-7474}:7474"
+      - "${NEO4J_BOLT_PORT:-7687}:7687"
+    volumes:
+      - ${DOCKER_DATA_ROOT:-./data}/neo4j/data:/data
+      - ${DOCKER_DATA_ROOT:-./data}/neo4j/logs:/logs
+      - ${DOCKER_DATA_ROOT:-./data}/neo4j/import:/var/lib/neo4j/import
+      - neo4j-plugins:/plugins
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:7474 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  neo4j-plugins:
+
+networks:
+  default:
+    name: horus-network
