@@ -635,17 +635,31 @@ class AIExtractor:
         return base_result
 
 
-    async def extract_structured(self, url: str, raw_html: str, hints: Optional[Dict[str, Any]] = None) -> Optional[ExtractedArticle]:
+    async def extract_structured(self, url: str, raw_html: str, hints: Optional[Dict[str, Any]] = None, use_llm: bool = False) -> Optional[ExtractedArticle]:
         hints = hints or {}
         content_sel = hints.get("content_selector")
         cleaned_text = self.fast_clean_text(raw_html, content_selector=content_sel)
-        if not cleaned_text or len(cleaned_text) < 20:
+        if not cleaned_text or len(cleaned_text) < 10:
             return None
 
-        # 기본 메타데이터 네이티브 추출
-        native_meta = self.extract_native_metadata(raw_html, url)
+        # 기본 메타데이터 네이티브 추출 (0% GPU 고속 CPU 파싱)
+        native_meta = self.extract_native_metadata(raw_html, url, hints=hints)
 
-        # LLM 프롬프트 구성
+        if not use_llm:
+            # 🚀 크롤링 단계: 초고속 네이티브 모드 (GPU 부하 0%, LLM 가공은 분리형 백그라운드 워커로 위임)
+            return ExtractedArticle(
+                title=native_meta.get("title") or "제목 없음",
+                content=cleaned_text,
+                summary=None,
+                author=native_meta.get("author"),
+                published_at=native_meta.get("published_at") or datetime.now(),
+                category=hints.get("category", "news"),
+                sentiment_score=None,
+                key_entities=[],
+                related_stocks=[]
+            )
+
+        # 🌟 테스트 프리뷰 또는 명시적 LLM 추출 요청 시에만 Ollama 호출
         prompt = f"""
 다음은 웹페이지에서 추출한 텍스트입니다. 기사의 핵심 메타데이터와 본문을 정제하여 JSON 형식으로 출력하세요.
 

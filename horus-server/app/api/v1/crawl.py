@@ -2,11 +2,11 @@ import asyncio
 import logging
 import os
 import sys
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc, func, text
 from typing import List, Dict, Any, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 # horus-eyes 모듈 경로를 sys.path에 동적으로 등록
 HORUS_EYES_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../../horus-eyes"))
@@ -16,6 +16,11 @@ if HORUS_EYES_DIR not in sys.path:
 from app.core.database import get_db
 from app.models.crawl_source import CrawlSource
 from app.models.article import Article
+from app.models.crawl_event import CrawlEvent
+
+from crawler.scheduler import crawl_scheduler
+from crawler.llm_worker import llm_worker
+
 from app.schemas.crawl import (
     CrawlSourceRead, CrawlSourceCreate, CrawlSourceUpdate, CrawlJobRequest, CrawlJobStatus,
     BackfillRequest, BackfillStatus, CrawlDashboardStats, CrawlTestRequest, CrawlTestResponse,
@@ -25,7 +30,12 @@ from app.schemas.crawl import (
     ArticleMetaSynthesizeRequest, ArticleMetaSynthesizeResponse,
     VisionDescribeRequest, VisionDescribeResponse,
     ReverseSelectorRequest, ReverseSelectorResponse,
-    AnchorGroupMatchRequest, AnchorGroupMatchResponse
+    AnchorGroupMatchRequest, AnchorGroupMatchResponse,
+    DaemonControlRequest, DaemonStatusResponse,
+    LLMWorkerControlRequest, LLMWorkerStatusResponse,
+    GPUUnifiedStatusResponse, TextWorkerControlRequest, VisionWorkerControlRequest,
+    CrawlEventItem, TimeSeriesMetricsResponse,
+    CallTick, LaneSeries, MultiLaneStreamResponse
 )
 
 logger = logging.getLogger(__name__)
@@ -158,6 +168,522 @@ async def delete_crawl_source(
     await db.delete(source)
     await db.commit()
     return {"status": "success", "message": f"Source {source_id} deleted"}
+
+
+# 개별 수집처 즉시 크롤링 백그라운드 태스크
+async def _execute_source_crawl_task(source_id: int, base_url: str, hints: dict, max_articles: int = 10):
+    try:
+        import sys
+        if HORUS_EYES_DIR not in sys.path:
+            sys.path.append(HORUS_EYES_DIR)
+        from crawler.pipeline import CrawlPipeline
+        pipeline = CrawlPipeline()
+        try:
+            logger.info(f"Triggering background crawl for source #{source_id}: {base_url}")
+            await pipeline.run_source_crawl(source_id, base_url, hints=hints, max_articles=max_articles)
+            logger.info(f"Finished background crawl for source #{source_id}")
+        finally:
+            await pipeline.close()
+    except Exception as e:
+        logger.error(f"Source #{source_id} background crawl failed: {e}", exc_info=True)
+
+
+@router.post("/trigger")
+@router.post("/jobs")
+async def trigger_source_crawl(
+    payload: CrawlJobRequest,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    특정 수집처(Seed)의 크롤링을 백그라운드로 즉시 트리거합니다.
+    """
+    result = await db.execute(select(CrawlSource).where(CrawlSource.id == payload.source_id))
+    source = result.scalar_one_or_none()
+    if not source:
+        raise HTTPException(status_code=404, detail="해당 수집처를 찾을 수 없습니다.")
+
+    max_pages = payload.max_pages or 10
+    background_tasks.add_task(
+        _execute_source_crawl_task,
+        source_id=source.id,
+        base_url=source.base_url,
+        hints=source.ai_parsing_hints or {},
+        max_articles=max_pages
+    )
+
+    return {
+        "status": "triggered",
+        "source_id": source.id,
+        "name": source.name,
+        "message": f"[{source.name}] 수집처의 저속 크롤링(TPS < 1.0, 최대 {max_pages}개) 작업이 안전하게 시작되었습니다."
+    }
+
+
+# ==============================================================================
+# 🔄 1. 지속 크롤러 데몬(Continuous Crawler Daemon) 제어 API
+# ==============================================================================
+@router.post("/daemon/start", response_model=DaemonStatusResponse)
+async def start_crawler_daemon(payload: Optional[DaemonControlRequest] = None):
+    """지속 크롤러 데몬 시작 / 주기 설정"""
+    interval = payload.interval_seconds if payload else 60
+    await crawl_scheduler.start(interval_seconds=interval)
+    return DaemonStatusResponse(**crawl_scheduler.get_status())
+
+@router.post("/daemon/pause", response_model=DaemonStatusResponse)
+async def pause_crawler_daemon():
+    """지속 크롤러 데몬 일시중단"""
+    crawl_scheduler.pause()
+    return DaemonStatusResponse(**crawl_scheduler.get_status())
+
+@router.post("/daemon/resume", response_model=DaemonStatusResponse)
+async def resume_crawler_daemon():
+    """지속 크롤러 데몬 재개"""
+    crawl_scheduler.resume()
+    return DaemonStatusResponse(**crawl_scheduler.get_status())
+
+@router.post("/daemon/stop", response_model=DaemonStatusResponse)
+async def stop_crawler_daemon():
+    """지속 크롤러 데몬 완전 중단"""
+    await crawl_scheduler.stop()
+    return DaemonStatusResponse(**crawl_scheduler.get_status())
+
+@router.get("/daemon/status", response_model=DaemonStatusResponse)
+async def get_crawler_daemon_status():
+    """지속 크롤러 데몬 상태 조회"""
+    return DaemonStatusResponse(**crawl_scheduler.get_status())
+
+
+# ==============================================================================
+# 🧠 2. 단일 직렬 GPU 작업 큐 & 텍스트/비전 듀얼 서브시스템 제어 API
+# ==============================================================================
+@router.get("/gpu/status", response_model=GPUUnifiedStatusResponse)
+async def get_gpu_worker_status():
+    """단일 직렬 GPU 큐 통합 상태 및 텍스트/비전 대기 큐 분리 조회"""
+    return GPUUnifiedStatusResponse(**(await llm_worker.get_unified_status()))
+
+# 📝 텍스트 NLP 서브시스템 제어
+@router.post("/gpu/text/start", response_model=GPUUnifiedStatusResponse)
+async def start_text_worker(payload: Optional[TextWorkerControlRequest] = None):
+    """텍스트 NLP 서브시스템 시작 (요약, 감성 분석, 엔티티 추출)"""
+    model_name = payload.model_name if payload else "gemma4:e4b-mlx"
+    await llm_worker.start_text(model_name=model_name)
+    return GPUUnifiedStatusResponse(**(await llm_worker.get_unified_status()))
+
+@router.post("/gpu/text/pause", response_model=GPUUnifiedStatusResponse)
+async def pause_text_worker():
+    """텍스트 NLP 서브시스템 일시중지 (GPU 연산 중단)"""
+    llm_worker.pause_text()
+    return GPUUnifiedStatusResponse(**(await llm_worker.get_unified_status()))
+
+@router.post("/gpu/text/resume", response_model=GPUUnifiedStatusResponse)
+async def resume_text_worker():
+    """텍스트 NLP 서브시스템 재개"""
+    llm_worker.resume_text()
+    return GPUUnifiedStatusResponse(**(await llm_worker.get_unified_status()))
+
+@router.post("/gpu/text/stop", response_model=GPUUnifiedStatusResponse)
+async def stop_text_worker():
+    """텍스트 NLP 서브시스템 정지"""
+    llm_worker.stop_text()
+    return GPUUnifiedStatusResponse(**(await llm_worker.get_unified_status()))
+
+# 🖼️ 비전 Image-to-Text 서브시스템 제어
+@router.post("/gpu/vision/start", response_model=GPUUnifiedStatusResponse)
+async def start_vision_worker(payload: Optional[VisionWorkerControlRequest] = None):
+    """비전 Image-to-Text 서브시스템 시작 (이미지 텍스트 변환, 본문 주입, 임시파일 삭제)"""
+    model_name = payload.model_name if payload else "qwen3.5:2b-mlx"
+    await llm_worker.start_vision(model_name=model_name)
+    return GPUUnifiedStatusResponse(**(await llm_worker.get_unified_status()))
+
+@router.post("/gpu/vision/pause", response_model=GPUUnifiedStatusResponse)
+async def pause_vision_worker():
+    """비전 Image-to-Text 서브시스템 일시중지 (GPU 연산 중단)"""
+    llm_worker.pause_vision()
+    return GPUUnifiedStatusResponse(**(await llm_worker.get_unified_status()))
+
+@router.post("/gpu/vision/resume", response_model=GPUUnifiedStatusResponse)
+async def resume_vision_worker():
+    """비전 Image-to-Text 서브시스템 재개"""
+    llm_worker.resume_vision()
+    return GPUUnifiedStatusResponse(**(await llm_worker.get_unified_status()))
+
+@router.post("/gpu/vision/stop", response_model=GPUUnifiedStatusResponse)
+async def stop_vision_worker():
+    """비전 Image-to-Text 서브시스템 정지"""
+    llm_worker.stop_vision()
+    return GPUUnifiedStatusResponse(**(await llm_worker.get_unified_status()))
+
+# 하위 호환성 레거시 라우트
+@router.post("/nlp/worker/start", response_model=LLMWorkerStatusResponse)
+async def start_llm_worker(payload: Optional[LLMWorkerControlRequest] = None):
+    model_name = payload.model_name if payload else "gemma4:e4b-mlx"
+    await llm_worker.start_text(model_name=model_name)
+    return LLMWorkerStatusResponse(**(await llm_worker.get_status()))
+
+@router.post("/nlp/worker/pause", response_model=LLMWorkerStatusResponse)
+async def pause_llm_worker():
+    llm_worker.pause_text()
+    return LLMWorkerStatusResponse(**(await llm_worker.get_status()))
+
+@router.post("/nlp/worker/resume", response_model=LLMWorkerStatusResponse)
+async def resume_llm_worker():
+    llm_worker.resume_text()
+    return LLMWorkerStatusResponse(**(await llm_worker.get_status()))
+
+@router.post("/nlp/worker/stop", response_model=LLMWorkerStatusResponse)
+async def stop_llm_worker():
+    llm_worker.stop_text()
+    return LLMWorkerStatusResponse(**(await llm_worker.get_status()))
+
+@router.get("/nlp/worker/status", response_model=LLMWorkerStatusResponse)
+async def get_llm_worker_status():
+    return LLMWorkerStatusResponse(**(await llm_worker.get_status()))
+
+
+
+# ==============================================================================
+# 📊 3. 시계열(Time-series) 수집 통계 및 실시간 라이브 이벤트 스트림 API
+# ==============================================================================
+@router.get("/events/recent", response_model=List[CrawlEventItem])
+async def get_recent_crawl_events(
+    limit: int = 50,
+    db: AsyncSession = Depends(get_db)
+):
+    """최근 실시간 크롤링 이벤트 목록 조회 (라이브 티커 피드용)"""
+    stmt = (
+        select(CrawlEvent, CrawlSource.name.label("source_name"))
+        .outerjoin(CrawlSource, CrawlEvent.source_id == CrawlSource.id)
+        .order_by(desc(CrawlEvent.created_at))
+        .limit(limit)
+    )
+    result = await db.execute(stmt)
+    rows = result.all()
+    
+    events = []
+    for event_obj, src_name in rows:
+        events.append(CrawlEventItem(
+            id=event_obj.id,
+            source_id=event_obj.source_id,
+            source_name=src_name,
+            event_type=event_obj.event_type,
+            title=event_obj.title,
+            url=event_obj.url,
+            image_url=event_obj.image_url,
+            details=event_obj.details or {},
+            created_at=event_obj.created_at
+        ))
+    return events
+
+
+@router.get("/metrics/timeseries", response_model=TimeSeriesMetricsResponse)
+async def get_timeseries_metrics(
+    time_range: str = Query("10m", alias="range"),  # 10m, 1h, 1d, 7d
+    source_id: Optional[str] = "all",
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    최근 10분, 1시간, 1일, 7일 동안의 수집 항목별(Seed스캔, 본문, 이미지, LLM정제) 시계열 데이터 집계 (UTC/KST 타임존 보정)
+    """
+    now_utc = datetime.now(timezone.utc)
+    kst = timezone(timedelta(hours=9))
+
+    if time_range == "10m":
+        start_time_utc = now_utc - timedelta(minutes=10)
+        bucket_count = 10
+        bucket_delta = timedelta(minutes=1)
+        date_format = "%H:%M"
+    elif time_range == "1h":
+        start_time_utc = now_utc - timedelta(hours=1)
+        bucket_count = 12
+        bucket_delta = timedelta(minutes=5)
+        date_format = "%H:%M"
+    elif time_range == "1d":
+        start_time_utc = now_utc - timedelta(days=1)
+        bucket_count = 24
+        bucket_delta = timedelta(hours=1)
+        date_format = "%H:00"
+    else:  # 7d
+        start_time_utc = now_utc - timedelta(days=7)
+        bucket_count = 7
+        bucket_delta = timedelta(days=1)
+        date_format = "%m-%d"
+
+    # 타임스탬프 버킷 생성 (KST 기준 문자열)
+    buckets = []
+    curr = start_time_utc
+    for _ in range(bucket_count):
+        curr_kst = curr.astimezone(kst)
+        buckets.append(curr_kst)
+        curr += bucket_delta
+
+    # 이벤트 조회
+    where_clauses = [CrawlEvent.created_at >= start_time_utc]
+    if source_id and source_id != "all":
+        try:
+            where_clauses.append(CrawlEvent.source_id == int(source_id))
+        except ValueError:
+            pass
+
+    stmt = select(CrawlEvent.event_type, CrawlEvent.created_at).where(*where_clauses)
+    res = await db.execute(stmt)
+    events = res.fetchall()
+
+    # 버킷별 집계
+    seed_scans = [0] * bucket_count
+    articles_ingested = [0] * bucket_count
+    images_ingested = [0] * bucket_count
+    llm_enriched = [0] * bucket_count
+
+    total_articles = 0
+    total_images = 0
+    total_llm = 0
+
+    for ev_type, ev_time in events:
+        if ev_type == "article_ingest":
+            total_articles += 1
+        elif ev_type == "image_ingest":
+            total_images += 1
+        elif ev_type == "llm_enrich":
+            total_llm += 1
+
+        # 해당 버킷 인덱스 계산 (UTC 기준 안전한 차이 계산)
+        ev_utc = ev_time if ev_time.tzinfo else ev_time.replace(tzinfo=timezone.utc)
+        diff_sec = (ev_utc - start_time_utc).total_seconds()
+        idx = int(diff_sec // bucket_delta.total_seconds())
+        if 0 <= idx < bucket_count:
+            if ev_type == "seed_scan":
+                seed_scans[idx] += 1
+            elif ev_type == "article_ingest":
+                articles_ingested[idx] += 1
+            elif ev_type == "image_ingest":
+                images_ingested[idx] += 1
+            elif ev_type == "llm_enrich":
+                llm_enriched[idx] += 1
+
+    return TimeSeriesMetricsResponse(
+        range=time_range,
+        source_id=source_id,
+        timestamps=[b.strftime(date_format) for b in buckets],
+        seed_scans=seed_scans,
+        articles_ingested=articles_ingested,
+        images_ingested=images_ingested,
+        llm_enriched=llm_enriched,
+        total_articles=total_articles,
+        total_images=total_images,
+        total_llm_enriched=total_llm
+    )
+
+
+# ==============================================================================
+# 🌊 4. 다중 레인 Horizon 실시간 스트림 파형 & 정밀 TPS 모니터링 API
+# ==============================================================================
+@router.get("/metrics/stream", response_model=MultiLaneStreamResponse)
+async def get_multilane_stream(
+    time_range: str = Query("10m", alias="range"),  # 10m, 1h, 1d, 7d
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    다중 레인(Multi-Lane) Horizon 실시간 스트림 데이터 (초당 1.0 TPS 엄격 검증 & 호출 틱)
+    - 시간축: 상단 우측(LIVE)에서 생성되어 좌측으로 이동
+    - 레인 0: 전체 통합 처리량 및 전체 TPS
+    - 레인 1~N: 각 활성 Seed별 처리량 및 실시간 TPS (초당 호출 횟수 / 초)
+    - 레인 N+1: LLM AI 정제 처리량
+    - 7일 초과 과거 데이터 자동 정리 (Rolling 7-day retention)
+    """
+    # 1. 7일 초과 과거 이벤트 자동 정리 (Rolling 7-day retention)
+    try:
+        cutoff_7d = datetime.now(timezone.utc) - timedelta(days=7)
+        await db.execute(text("DELETE FROM crawl_events WHERE created_at < :cutoff"), {"cutoff": cutoff_7d})
+        await db.commit()
+    except Exception as e:
+        logger.debug(f"Retention cleanup error: {e}")
+
+    now_utc = datetime.now(timezone.utc)
+    kst = timezone(timedelta(hours=9))
+
+    if time_range == "10m":
+        start_time_utc = now_utc - timedelta(minutes=10)
+        bucket_count = 60  # 10초 틱 (60개 포인트)
+        bucket_delta = timedelta(seconds=10)
+        date_format = "%H:%M:%S"
+        window_sec = 600
+    elif time_range == "1h":
+        start_time_utc = now_utc - timedelta(hours=1)
+        bucket_count = 60  # 1분 틱 (60개 포인트)
+        bucket_delta = timedelta(minutes=1)
+        date_format = "%H:%M"
+        window_sec = 3600
+    elif time_range == "1d":
+        start_time_utc = now_utc - timedelta(days=1)
+        bucket_count = 48  # 30분 틱 (48개 포인트)
+        bucket_delta = timedelta(minutes=30)
+        date_format = "%m-%d %H:00"
+        window_sec = 86400
+    else:  # 7d
+        start_time_utc = now_utc - timedelta(days=7)
+        bucket_count = 56  # 3시간 틱 (56개 포인트)
+        bucket_delta = timedelta(hours=3)
+        date_format = "%m-%d %H:00"
+        window_sec = 86400 * 7
+
+    bucket_sec = max(1.0, bucket_delta.total_seconds())
+
+    # 2. 타임스탬프 버킷 생성 (KST 기준 문자열 포맷)
+    timestamps = []
+    curr = start_time_utc
+    for _ in range(bucket_count):
+        curr_kst = curr.astimezone(kst)
+        timestamps.append(curr_kst.strftime(date_format))
+        curr += bucket_delta
+
+    # 3. 활성 Seed 목록 조회
+    sources_res = await db.execute(select(CrawlSource).order_by(CrawlSource.id))
+    sources = sources_res.scalars().all()
+
+    # 4. 해당 시간 윈도우 내 모든 이벤트 조회
+    stmt = (
+        select(CrawlEvent.id, CrawlEvent.source_id, CrawlEvent.event_type, CrawlEvent.title, CrawlEvent.url, CrawlEvent.created_at)
+        .where(CrawlEvent.created_at >= start_time_utc)
+        .order_by(CrawlEvent.created_at)
+    )
+    events_res = await db.execute(stmt)
+    events = events_res.fetchall()
+
+    # 5. 레인 구성 및 색상 팔레트
+    palette = [
+        ("#10b981", "#059669"),  # Emerald Green
+        ("#3b82f6", "#2563eb"),  # Sky Blue
+        ("#f59e0b", "#d97706"),  # Amber / Orange
+        ("#a855f7", "#7c3aed"),  # Violet / Purple
+        ("#ec4899", "#db2777"),  # Rose Pink
+        ("#06b6d4", "#0891b2"),  # Cyan
+        ("#14b8a6", "#0d9488"),  # Teal
+    ]
+
+    total_req_counts = [0] * bucket_count
+    source_req_counts = {s.id: [0] * bucket_count for s in sources}
+    source_totals = {s.id: 0 for s in sources}
+    source_events_list = {s.id: [] for s in sources}
+    llm_counts = [0] * bucket_count
+    total_llm = 0
+    total_events_count = len(events)
+    latest_event_time = None
+
+    for ev_id, src_id, ev_type, title, url, ev_time in events:
+        ev_utc = ev_time if ev_time.tzinfo else ev_time.replace(tzinfo=timezone.utc)
+        latest_event_time = ev_utc.astimezone(kst).isoformat()
+        diff_sec = (ev_utc - start_time_utc).total_seconds()
+        idx = int(diff_sec // bucket_sec)
+
+        if 0 <= idx < bucket_count:
+            if ev_type in ("seed_scan", "article_ingest"):
+                total_req_counts[idx] += 1
+                if src_id in source_req_counts:
+                    source_req_counts[src_id][idx] += 1
+                    source_totals[src_id] += 1
+                    source_events_list[src_id].append((ev_id, ev_type, title, url, ev_utc))
+            elif ev_type == "llm_enrich":
+                llm_counts[idx] += 1
+                total_llm += 1
+
+    # 6. 초단위 TPS 변환 (요청 수 / 버킷 초)
+    total_tps_values = [round(c / bucket_sec, 3) for c in total_req_counts]
+    global_max_tps = max(total_tps_values) if total_tps_values else 0.0
+
+    lanes: List[LaneSeries] = []
+
+    # Lane 0: Total Aggregate
+    lanes.append(LaneSeries(
+        id="total",
+        name="0. 전체 통합 수집 파형 (Global Aggregate)",
+        category="total",
+        color="#10b981",
+        secondary_color="#059669",
+        values=total_tps_values,
+        raw_counts=total_req_counts,
+        total_count=sum(total_req_counts),
+        peak_tps=max(total_tps_values) if total_tps_values else 0.0,
+        avg_tps=round(sum(total_tps_values) / max(1, len(total_tps_values)), 3),
+        max_tps_limit=1.0,
+        recent_calls=[]
+    ))
+
+    # Lanes 1..N: Individual Sources
+    for i, s in enumerate(sources):
+        c_primary, c_sec = palette[(i + 1) % len(palette)]
+        req_counts = source_req_counts[s.id]
+        tps_list = [round(c / bucket_sec, 3) for c in req_counts]
+        peak = max(tps_list) if tps_list else 0.0
+        avg = round(sum(tps_list) / max(1, len(tps_list)), 3)
+
+        # 개별 호출 틱 계산 (최근 15건의 호출 간격 및 순간 TPS)
+        call_ticks = []
+        ev_list = source_events_list[s.id]
+        for k in range(max(0, len(ev_list) - 15), len(ev_list)):
+            ev_id, ev_type, title, url, ev_utc = ev_list[k]
+            prev_utc = ev_list[k - 1][4] if k > 0 else None
+            interval = round((ev_utc - prev_utc).total_seconds(), 2) if prev_utc else 0.0
+            instant_tps = round(1.0 / interval, 2) if interval > 0 else 0.0
+            call_ticks.append(CallTick(
+                id=ev_id,
+                event_type=ev_type,
+                time_str=ev_utc.astimezone(kst).strftime("%H:%M:%S"),
+                title=title,
+                url=url,
+                interval_seconds=interval,
+                instant_tps=instant_tps
+            ))
+
+        lanes.append(LaneSeries(
+            id=str(s.id),
+            name=f"{i+1}. {s.name}",
+            category="source",
+            color=c_primary,
+            secondary_color=c_sec,
+            values=tps_list,
+            raw_counts=req_counts,
+            total_count=source_totals[s.id],
+            peak_tps=peak,
+            avg_tps=avg,
+            max_tps_limit=1.0,
+            recent_calls=call_ticks
+        ))
+
+    # Lane N+1: LLM AI 정제
+    llm_tps_list = [round(c / bucket_sec, 3) for c in llm_counts]
+    lanes.append(LaneSeries(
+        id="llm",
+        name=f"{len(sources)+1}. LLM AI 정제 및 요약 파형",
+        category="type",
+        color="#06b6d4",
+        secondary_color="#0891b2",
+        values=llm_tps_list,
+        raw_counts=llm_counts,
+        total_count=total_llm,
+        peak_tps=max(llm_tps_list) if llm_tps_list else 0.0,
+        avg_tps=round(sum(llm_tps_list) / max(1, len(llm_tps_list)), 3),
+        max_tps_limit=1.0,
+        recent_calls=[]
+    ))
+
+    # DB 내 중복 URL 검사
+    dupe_res = await db.execute(text("SELECT count(*) FROM (SELECT url FROM articles GROUP BY url HAVING count(*) > 1) t"))
+    dupe_count = dupe_res.scalar() or 0
+
+    return MultiLaneStreamResponse(
+        range=time_range,
+        timestamps=timestamps,
+        time_window_seconds=window_sec,
+        lanes=lanes,
+        total_events=total_events_count,
+        active_lanes_count=len(lanes),
+        global_max_tps=global_max_tps,
+        is_tps_compliant=all(l.peak_tps <= 1.05 for l in lanes if l.category == "source"),
+        duplicate_count=dupe_count,
+        latest_event_time=latest_event_time
+    )
+
 
 # 백필 백그라운드 태스크
 async def _execute_backfill_task(start_date: str, end_date: str, section: str, max_articles: int):

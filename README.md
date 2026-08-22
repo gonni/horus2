@@ -8,6 +8,11 @@
 
 ```
 horus-dev/
+├── docs/                # [LLM Wiki] 단일 진실 공급원(SSOT) - 아키텍처, ADR, 모듈별 정밀 스펙
+│   ├── SYSTEM_OVERVIEW.md  # 전체 시스템 조감도 및 아키텍처
+│   ├── STATE.md            # 현재 구현 완료 현황 및 세션 인수인계 노트
+│   ├── adr/                # 아키텍처 결정 기록 (ADR-001 ~ ADR-004)
+│   └── specs/              # 모듈별 정밀 기능 명세서 (SPEC-001 ~ SPEC-005)
 ├── docker/              # [인프라] PostgreSQL 16 (TimescaleDB + pgvector), Neo4j 5, Redis 7
 │   ├── docker-compose.yml
 │   ├── .env.example
@@ -21,6 +26,10 @@ horus-dev/
 ├── SETUP_GUIDE.md       # [가이드] 타 PC 개발 환경 설정 및 트러블슈팅 매뉴얼
 └── README.md
 ```
+
+> [!TIP]
+> **LLM Wiki / 개발 명세서(SSOT)**: 새로운 AI 세션이나 다른 AI 에이전트에서 작업할 때는 [**`docs/SYSTEM_OVERVIEW.md`**](./docs/SYSTEM_OVERVIEW.md) 및 [**`docs/STATE.md`**](./docs/STATE.md)를 먼저 확인하세요. 상세 모듈 스펙은 [`docs/specs/`](./docs/specs/)에 정리되어 있습니다.
+
 
 ---
 

@@ -22,7 +22,7 @@ class CrawlerSettings(BaseSettings):
     # LLM Settings for AI Parsing
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     OLLAMA_URL: Optional[str] = "http://localhost:11434"
-    OLLAMA_MODEL: str = "gemma4:12b-mlx"
+    OLLAMA_MODEL: str = "gemma4:e4b-mlx"
     GEMINI_API_KEY: Optional[str] = None
     GEMINI_MODEL: str = "gemini-2.0-flash"
 

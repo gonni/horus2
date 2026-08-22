@@ -265,6 +265,134 @@ class AnchorGroupMatchResponse(BaseModel):
     excluded_sample_notices: List[str] = Field(default_factory=list)
     message: str = ""
 
+# 🔄 지속 크롤러 데몬(Daemon) 스키마
+class DaemonControlRequest(BaseModel):
+    interval_seconds: Optional[int] = Field(default=60, ge=10, le=3600, description="크롤링 주기 (초)")
+
+class DaemonStatusResponse(BaseModel):
+    state: str = Field(description="IDLE, RUNNING, PAUSED, STOPPED")
+    interval_seconds: int = 60
+    seconds_to_next_cycle: int = 0
+    cycle_count: int = 0
+    total_ingested_articles: int = 0
+    total_scanned_seeds: int = 0
+    current_running_seed_name: Optional[str] = None
+    last_cycle_started_at: Optional[str] = None
+    last_cycle_finished_at: Optional[str] = None
+    next_run_at: Optional[str] = None
+    last_error_message: Optional[str] = None
+
+# 🧠 GPU 단일 직렬 큐 & 텍스트/비전 듀얼 워커 스키마
+class TextWorkerControlRequest(BaseModel):
+    model_name: Optional[str] = Field(default="gemma4:e4b-mlx", description="Ollama 텍스트 모델명")
+
+class VisionWorkerControlRequest(BaseModel):
+    model_name: Optional[str] = Field(default="qwen3.5:2b-mlx", description="Ollama 비전 모델명")
+
+class GPUUnifiedStatusResponse(BaseModel):
+    text_state: str = Field(default="IDLE", description="IDLE, RUNNING, PAUSED, STOPPED")
+    text_model_name: str = "gemma4:e4b-mlx"
+    text_pending_count: int = 0
+    text_processed_count: int = 0
+    text_failed_count: int = 0
+
+    vision_state: str = Field(default="IDLE", description="IDLE, RUNNING, PAUSED, STOPPED")
+    vision_model_name: str = "qwen3.5:2b-mlx"
+    vision_pending_count: int = 0
+    vision_processed_count: int = 0
+    vision_failed_count: int = 0
+
+    total_articles: int = 0
+    current_task: Optional[Dict[str, Any]] = None
+    last_processed_at: Optional[str] = None
+    last_error_message: Optional[str] = None
+
+class LLMWorkerControlRequest(BaseModel):
+    model_name: Optional[str] = Field(default="gemma4:e4b-mlx", description="Ollama 모델명")
+    batch_size: Optional[int] = Field(default=2, ge=1, le=10)
+    interval_seconds: Optional[float] = Field(default=3.0, ge=0.5, le=60.0)
+
+class LLMWorkerStatusResponse(BaseModel):
+    state: str = Field(description="IDLE, RUNNING, PAUSED, STOPPED")
+    model_name: str = "gemma4:e4b-mlx"
+    batch_size: int = 2
+    interval_seconds: float = 3.0
+    processed_count: int = 0
+    failed_count: int = 0
+    pending_count: int = 0
+    total_articles: int = 0
+    current_item_title: Optional[str] = None
+    last_processed_at: Optional[str] = None
+    last_error_message: Optional[str] = None
+    unified: Optional[Dict[str, Any]] = None
+
+
+# 📊 실시간 수집 이벤트 및 시계열 스키마
+class CrawlEventItem(BaseModel):
+    id: int
+    source_id: Optional[int] = None
+    source_name: Optional[str] = None
+    event_type: str = Field(description="seed_scan, article_ingest, image_ingest, llm_enrich, duplicate_skip, error")
+    title: Optional[str] = None
+    url: Optional[str] = None
+    image_url: Optional[str] = None
+    details: Dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class TimeSeriesMetricsResponse(BaseModel):
+    range: str
+    source_id: Optional[str] = "all"
+    timestamps: List[str] = Field(default_factory=list)
+    seed_scans: List[int] = Field(default_factory=list)
+    articles_ingested: List[int] = Field(default_factory=list)
+    images_ingested: List[int] = Field(default_factory=list)
+    llm_enriched: List[int] = Field(default_factory=list)
+    total_articles: int = 0
+    total_images: int = 0
+    total_llm_enriched: int = 0
+
+# 🌊 다중 레인 Horizon 실시간 스트림 스키마 (초단위 호출 틱 & TPS 정밀 모니터링)
+class CallTick(BaseModel):
+    id: int
+    event_type: str  # 'seed_scan', 'article_ingest', 'image_ingest', 'llm_enrich'
+    time_str: str
+    title: Optional[str] = None
+    url: Optional[str] = None
+    interval_seconds: float = 0.0
+    instant_tps: float = 0.0
+
+class LaneSeries(BaseModel):
+    id: str
+    name: str
+    category: str = "source"  # 'total', 'source', 'type'
+    color: str = "#10b981"
+    secondary_color: Optional[str] = None
+    values: List[float] = Field(default_factory=list)  # Instantaneous TPS (0.0 ~ 1.0)
+    raw_counts: List[int] = Field(default_factory=list)
+    total_count: int = 0
+    peak_tps: float = 0.0
+    avg_tps: float = 0.0
+    max_tps_limit: float = 1.0
+    recent_calls: List[CallTick] = Field(default_factory=list)
+
+class MultiLaneStreamResponse(BaseModel):
+    range: str
+    timestamps: List[str] = Field(default_factory=list)
+    time_window_seconds: int = 600
+    lanes: List[LaneSeries] = Field(default_factory=list)
+    total_events: int = 0
+    active_lanes_count: int = 0
+    global_max_tps: float = 0.0
+    is_tps_compliant: bool = True
+    duplicate_count: int = 0
+    latest_event_time: Optional[str] = None
+
+
+
+
 
 
 

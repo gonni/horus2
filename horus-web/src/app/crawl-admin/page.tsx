@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import dynamic from "next/dynamic";
 import {
   api,
   CrawlSource,
@@ -13,8 +14,18 @@ import {
   WrapperSynthesisResponse,
   DOMInspectItem,
   DOMContainerGroup,
-  DOMInspectResponse
+  DOMInspectResponse,
+  DaemonStatusResponse,
+  LLMWorkerStatusResponse,
+  GPUUnifiedStatusResponse,
+  CrawlEventItem,
+  TimeSeriesMetricsResponse,
+  MultiLaneStreamResponse,
+  LaneSeries
 } from "@/lib/api";
+
+import { MultiLaneStreamChart } from "@/components/MultiLaneStreamChart";
+const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
 import {
   Activity,
   Calendar,
@@ -25,6 +36,7 @@ import {
   Layers,
   Pause,
   Play,
+  Square,
   Plus,
   RefreshCw,
   Search,
@@ -57,7 +69,10 @@ import {
   CheckCircle2,
   MinusCircle,
   PlusCircle,
-  HelpCircle
+  HelpCircle,
+  Cpu,
+  Flame,
+  Radio
 } from "lucide-react";
 
 // React JSX 렌더링 에러(Objects are not valid as a React child) 방지용 안전 문자열 포맷터
@@ -120,7 +135,7 @@ export default function CrawlAdminDashboard() {
   const [isWrapperModalOpen, setIsWrapperModalOpen] = useState(false);
   const [selectedSourceForWrapper, setSelectedSourceForWrapper] = useState<CrawlSource | null>(null);
   const [wrapperMode, setWrapperMode] = useState<"anchor" | "auto" | "manual">("anchor");
-  const [wrapperModelName, setWrapperModelName] = useState("gemma4:12b-mlx");
+  const [wrapperModelName, setWrapperModelName] = useState("gemma4:e4b-mlx");
   const [customModelInput, setCustomModelInput] = useState(false);
   const [synthesizingWrapper, setSynthesizingWrapper] = useState(false);
   const [wrapperResult, setWrapperResult] = useState<WrapperSynthesisResponse | null>(null);
@@ -134,12 +149,35 @@ export default function CrawlAdminDashboard() {
     views_selector: "",
     category_selector: "",
     image_selector: "",
-    llm_model: "gemma4:12b-mlx",
+    llm_model: "gemma4:e4b-mlx",
   });
   const [testingRules, setTestingRules] = useState(false);
   const [savingWrapper, setSavingWrapper] = useState(false);
   const [wrapperStep, setWrapperStep] = useState<"step1_list" | "step2_article">("step1_list");
   const [wrapperActiveTab, setWrapperActiveTab] = useState<"rules" | "preview" | "reasoning">("rules");
+
+  // 🔄 지속 크롤러 데몬(Continuous Daemon) 상태
+  const [daemonStatus, setDaemonStatus] = useState<DaemonStatusResponse | null>(null);
+  const [daemonIntervalInput, setDaemonIntervalInput] = useState<number>(60);
+  const [controllingDaemon, setControllingDaemon] = useState(false);
+
+  // 🧠 단일 직렬 GPU 작업 큐 & 텍스트/비전 듀얼 서브시스템 상태
+  const [gpuStatus, setGpuStatus] = useState<GPUUnifiedStatusResponse | null>(null);
+  const [textModelName, setTextModelName] = useState<string>("gemma4:e4b-mlx");
+  const [visionModelName, setVisionModelName] = useState<string>("qwen3.5:2b-mlx");
+  const [controllingText, setControllingText] = useState(false);
+  const [controllingVision, setControllingVision] = useState(false);
+  const [llmWorkerStatus, setLlmWorkerStatus] = useState<LLMWorkerStatusResponse | null>(null);
+  const [selectedWorkerModel, setSelectedWorkerModel] = useState<string>("gemma4:e4b-mlx");
+  const [controllingWorker, setControllingWorker] = useState(false);
+
+  // 📊 시계열 분석 차트 & 실시간 라이브 이벤트 스트림 상태
+  const [timeSeriesRange, setTimeSeriesRange] = useState<"10m" | "1h" | "1d" | "7d">("10m");
+  const [timeSeriesSourceId, setTimeSeriesSourceId] = useState<string>("all");
+  const [timeSeriesData, setTimeSeriesData] = useState<TimeSeriesMetricsResponse | null>(null);
+  const [loadingTimeSeries, setLoadingTimeSeries] = useState(false);
+  const [recentEvents, setRecentEvents] = useState<CrawlEventItem[]>([]);
+  const [loadingEvents, setLoadingEvents] = useState(false);
 
   // 다수 페이지(Multi-sample) 본문 및 메타데이터 자동 합성 상태
   const [synthesizingArticleMeta, setSynthesizingArticleMeta] = useState(false);
@@ -168,8 +206,8 @@ export default function CrawlAdminDashboard() {
   const [inspectingDom, setInspectingDom] = useState(false);
   const [domSearchQuery, setDomSearchQuery] = useState("");
   const [installedModels, setInstalledModels] = useState<string[]>([
-    "gemma4:12b-mlx",
     "gemma4:e4b-mlx",
+    "gemma4:12b-mlx",
     "gemma4:12b",
     "qwen2.5:27b",
     "llama3.3:70b"
@@ -217,19 +255,237 @@ export default function CrawlAdminDashboard() {
     }
   };
 
+  // 4. 지속 크롤러 데몬 상태 로드 & 제어
+  const fetchDaemonStatus = async () => {
+    try {
+      const res = await api.get("/crawl/daemon/status");
+      setDaemonStatus(res.data);
+      if (res.data.interval_seconds) {
+        setDaemonIntervalInput(res.data.interval_seconds);
+      }
+    } catch (e) {
+      console.error("Failed to fetch daemon status:", e);
+    }
+  };
+
+  const handleStartDaemon = async (interval?: number) => {
+    setControllingDaemon(true);
+    try {
+      const res = await api.post("/crawl/daemon/start", {
+        interval_seconds: interval || daemonIntervalInput,
+      });
+      setDaemonStatus(res.data);
+    } catch (e: any) {
+      console.error("Start daemon failed:", e);
+      alert(formatErrorMessage(e, "크롤러 데몬 시작 실패"));
+    } finally {
+      setControllingDaemon(false);
+    }
+  };
+
+  const handlePauseDaemon = async () => {
+    setControllingDaemon(true);
+    try {
+      const res = await api.post("/crawl/daemon/pause");
+      setDaemonStatus(res.data);
+    } catch (e: any) {
+      console.error("Pause daemon failed:", e);
+    } finally {
+      setControllingDaemon(false);
+    }
+  };
+
+  const handleResumeDaemon = async () => {
+    setControllingDaemon(true);
+    try {
+      const res = await api.post("/crawl/daemon/resume");
+      setDaemonStatus(res.data);
+    } catch (e: any) {
+      console.error("Resume daemon failed:", e);
+    } finally {
+      setControllingDaemon(false);
+    }
+  };
+
+  const handleStopDaemon = async () => {
+    setControllingDaemon(true);
+    try {
+      const res = await api.post("/crawl/daemon/stop");
+      setDaemonStatus(res.data);
+    } catch (e: any) {
+      console.error("Stop daemon failed:", e);
+    } finally {
+      setControllingDaemon(false);
+    }
+  };
+
+  // 5. 단일 직렬 GPU 작업 큐 & 텍스트/비전 듀얼 서브시스템 상태 로드 & 제어
+  const fetchGPUStatus = async () => {
+    try {
+      const res = await api.get("/crawl/gpu/status");
+      setGpuStatus(res.data);
+      if (res.data.text_model_name) setTextModelName(res.data.text_model_name);
+      if (res.data.vision_model_name) setVisionModelName(res.data.vision_model_name);
+    } catch (e) {
+      console.error("Failed to fetch GPU status:", e);
+    }
+  };
+
+  // 📝 텍스트 NLP 제어
+  const handleStartTextWorker = async (model?: string) => {
+    setControllingText(true);
+    try {
+      const res = await api.post("/crawl/gpu/text/start", {
+        model_name: model || textModelName,
+      });
+      setGpuStatus(res.data);
+    } catch (e: any) {
+      console.error("Start text worker failed:", e);
+      alert(formatErrorMessage(e, "텍스트 NLP 시작 실패"));
+    } finally {
+      setControllingText(false);
+    }
+  };
+
+  const handlePauseTextWorker = async () => {
+    setControllingText(true);
+    try {
+      const res = await api.post("/crawl/gpu/text/pause");
+      setGpuStatus(res.data);
+    } catch (e: any) {
+      console.error("Pause text worker failed:", e);
+    } finally {
+      setControllingText(false);
+    }
+  };
+
+  const handleResumeTextWorker = async () => {
+    setControllingText(true);
+    try {
+      const res = await api.post("/crawl/gpu/text/resume");
+      setGpuStatus(res.data);
+    } catch (e: any) {
+      console.error("Resume text worker failed:", e);
+    } finally {
+      setControllingText(false);
+    }
+  };
+
+  const handleStopTextWorker = async () => {
+    setControllingText(true);
+    try {
+      const res = await api.post("/crawl/gpu/text/stop");
+      setGpuStatus(res.data);
+    } catch (e: any) {
+      console.error("Stop text worker failed:", e);
+    } finally {
+      setControllingText(false);
+    }
+  };
+
+  // 🖼️ 비전 Image-to-Text 제어
+  const handleStartVisionWorker = async (model?: string) => {
+    setControllingVision(true);
+    try {
+      const res = await api.post("/crawl/gpu/vision/start", {
+        model_name: model || visionModelName,
+      });
+      setGpuStatus(res.data);
+    } catch (e: any) {
+      console.error("Start vision worker failed:", e);
+      alert(formatErrorMessage(e, "비전 Image-to-Text 시작 실패"));
+    } finally {
+      setControllingVision(false);
+    }
+  };
+
+  const handlePauseVisionWorker = async () => {
+    setControllingVision(true);
+    try {
+      const res = await api.post("/crawl/gpu/vision/pause");
+      setGpuStatus(res.data);
+    } catch (e: any) {
+      console.error("Pause vision worker failed:", e);
+    } finally {
+      setControllingVision(false);
+    }
+  };
+
+  const handleResumeVisionWorker = async () => {
+    setControllingVision(true);
+    try {
+      const res = await api.post("/crawl/gpu/vision/resume");
+      setGpuStatus(res.data);
+    } catch (e: any) {
+      console.error("Resume vision worker failed:", e);
+    } finally {
+      setControllingVision(false);
+    }
+  };
+
+  const handleStopVisionWorker = async () => {
+    setControllingVision(true);
+    try {
+      const res = await api.post("/crawl/gpu/vision/stop");
+      setGpuStatus(res.data);
+    } catch (e: any) {
+      console.error("Stop vision worker failed:", e);
+    } finally {
+      setControllingVision(false);
+    }
+  };
+
+  const fetchLLMWorkerStatus = fetchGPUStatus;
+  const handleStartLLMWorker = handleStartTextWorker;
+  const handlePauseLLMWorker = handlePauseTextWorker;
+  const handleResumeLLMWorker = handleResumeTextWorker;
+  const handleStopLLMWorker = handleStopTextWorker;
+
+  // 6. 시계열 메트릭 & 최근 이벤트 피드 로드
+  const fetchTimeSeries = async (rangeParam?: string, sourceParam?: string) => {
+    setLoadingTimeSeries(true);
+    try {
+      const r = rangeParam || timeSeriesRange;
+      const s = sourceParam || timeSeriesSourceId;
+      const res = await api.get(`/crawl/metrics/timeseries?range=${r}&source_id=${s}`);
+      setTimeSeriesData(res.data);
+    } catch (e) {
+      console.error("Failed to load timeseries metrics:", e);
+    } finally {
+      setLoadingTimeSeries(false);
+    }
+  };
+
+  const fetchRecentEvents = async () => {
+    try {
+      const res = await api.get("/crawl/events/recent?limit=50");
+      setRecentEvents(res.data);
+    } catch (e) {
+      console.error("Failed to load recent events:", e);
+    }
+  };
+
   useEffect(() => {
     fetchDashboardStats();
     fetchSources();
     fetchBackfillStatus();
+    fetchDaemonStatus();
+    fetchLLMWorkerStatus();
+    fetchTimeSeries(timeSeriesRange, timeSeriesSourceId);
+    fetchRecentEvents();
 
-    // 5초 주기 통계 갱신 (모달 열림 시 리렌더링 및 GPU 부하 방지를 위해 조건부 갱신)
+    // 3초 주기 실시간 데몬/워커/시계열/이벤트 갱신
     const interval = setInterval(() => {
       if (!isWrapperModalOpen && !isTestModalOpen) {
         fetchDashboardStats();
+        fetchDaemonStatus();
+        fetchLLMWorkerStatus();
+        fetchRecentEvents();
+        fetchTimeSeries(timeSeriesRange, timeSeriesSourceId);
       }
-    }, 5000);
+    }, 3000);
     return () => clearInterval(interval);
-  }, [isWrapperModalOpen, isTestModalOpen]);
+  }, [isWrapperModalOpen, isTestModalOpen, timeSeriesRange, timeSeriesSourceId]);
 
   // 백필 폴링
   useEffect(() => {
@@ -824,6 +1080,119 @@ export default function CrawlAdminDashboard() {
     }
   };
 
+  // ECharts 시계열 차트 옵션 빌더
+  const getEChartsOption = () => {
+    if (!timeSeriesData || !timeSeriesData.timestamps) return {};
+    return {
+      backgroundColor: "transparent",
+      tooltip: {
+        trigger: "axis",
+        backgroundColor: "rgba(15, 23, 42, 0.95)",
+        borderColor: "#334155",
+        textStyle: { color: "#f8fafc", fontSize: 12 },
+        axisPointer: { type: "cross", label: { backgroundColor: "#1e293b" } },
+      },
+      legend: {
+        data: [
+          "Seed 스캔 (Seed Scan)",
+          "신규 기사 (Articles)",
+          "본문 이미지 (Images)",
+          "LLM 정제 완료 (LLM Enriched)",
+        ],
+        textStyle: { color: "#94a3b8", fontSize: 11 },
+        top: 0,
+        right: 10,
+      },
+      grid: {
+        left: "3%",
+        right: "4%",
+        bottom: "3%",
+        top: "40px",
+        containLabel: true,
+      },
+      xAxis: {
+        type: "category",
+        boundaryGap: false,
+        data: timeSeriesData.timestamps,
+        axisLine: { lineStyle: { color: "#334155" } },
+        axisLabel: { color: "#64748b", fontSize: 11 },
+      },
+      yAxis: {
+        type: "value",
+        splitLine: { lineStyle: { color: "#1e293b" } },
+        axisLabel: { color: "#64748b", fontSize: 11 },
+      },
+      series: [
+        {
+          name: "Seed 스캔 (Seed Scan)",
+          type: "line",
+          smooth: true,
+          showSymbol: true,
+          symbolSize: 6,
+          data: timeSeriesData.seed_scans,
+          itemStyle: { color: "#a855f7" }, // Purple
+          lineStyle: { width: 2, color: "#a855f7" },
+        },
+        {
+          name: "신규 기사 (Articles)",
+          type: "line",
+          smooth: true,
+          showSymbol: true,
+          symbolSize: 6,
+          areaStyle: {
+            color: {
+              type: "linear",
+              x: 0,
+              y: 0,
+              x2: 0,
+              y2: 1,
+              colorStops: [
+                { offset: 0, color: "rgba(16, 185, 129, 0.35)" },
+                { offset: 1, color: "rgba(16, 185, 129, 0.0)" },
+              ],
+            },
+          },
+          data: timeSeriesData.articles_ingested,
+          itemStyle: { color: "#10b981" }, // Emerald
+          lineStyle: { width: 2.5, color: "#10b981" },
+        },
+        {
+          name: "본문 이미지 (Images)",
+          type: "line",
+          smooth: true,
+          showSymbol: true,
+          symbolSize: 6,
+          data: timeSeriesData.images_ingested,
+          itemStyle: { color: "#f59e0b" }, // Amber
+          lineStyle: { width: 2, color: "#f59e0b" },
+        },
+        {
+          name: "LLM 정제 완료 (LLM Enriched)",
+          type: "line",
+          smooth: true,
+          showSymbol: true,
+          symbolSize: 6,
+          areaStyle: {
+            color: {
+              type: "linear",
+              x: 0,
+              y: 0,
+              x2: 0,
+              y2: 1,
+              colorStops: [
+                { offset: 0, color: "rgba(6, 182, 212, 0.35)" },
+                { offset: 1, color: "rgba(6, 182, 212, 0.0)" },
+              ],
+            },
+          },
+          data: timeSeriesData.llm_enriched,
+          itemStyle: { color: "#06b6d4" }, // Cyan
+          lineStyle: { width: 2.5, color: "#06b6d4" },
+        },
+      ],
+    };
+  };
+
   return (
     <div className="space-y-6 max-w-7xl mx-auto pb-12">
       {/* 상단 헤더 */}
@@ -877,11 +1246,10 @@ export default function CrawlAdminDashboard() {
       </div>
 
       {/* 1급 요구사항 상태 뱃지 배너 */}
-      <div className="bg-slate-900/60 border border-emerald-500/30 rounded-xl p-3.5 flex flex-wrap items-center justify-between gap-3 text-xs">
+      <div className="bg-slate-900 border border-emerald-500/30 rounded-xl p-3.5 flex flex-wrap items-center justify-between gap-3 text-xs">
         <div className="flex items-center gap-2.5">
           <span className="flex h-2.5 w-2.5 relative">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-            <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+            <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500 shadow-[0_0_6px_rgba(52,211,153,0.8)]"></span>
           </span>
           <div className="flex items-center gap-1.5 text-emerald-400 font-semibold">
             <ShieldCheck className="w-4 h-4" />
@@ -911,6 +1279,463 @@ export default function CrawlAdminDashboard() {
       {/* 탭 1: 수집 모니터링 대시보드 */}
       {activeTab === "dashboard" && (
         <div className="space-y-6">
+          {/* 상단 듀얼 제어 허브: 2단 배치 (1단: 크롤러 데몬, 2단: GPU 단일 직렬 큐 워커) */}
+          <div className="space-y-4">
+            {/* 1단 (상단): 🔄 주기적 지속 크롤러 데몬 (Full-Width Responsive Bar) */}
+            <div className="bg-slate-900 border border-indigo-500/30 rounded-xl p-4 md:p-5 relative overflow-hidden shadow-lg">
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                {/* 좌측: 타이틀 & 상태 뱃지 */}
+                <div className="flex items-center gap-3 min-w-[260px]">
+                  <div className="p-2.5 bg-indigo-500/10 border border-indigo-500/20 rounded-lg text-indigo-400">
+                    <Activity className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h2 className="text-base font-bold text-white flex items-center gap-2">
+                      주기적 지속 크롤러 데몬
+                      {daemonStatus?.state === "RUNNING" && (
+                        <span className="px-2 py-0.5 text-[11px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded-full font-semibold flex items-center gap-1.5">
+                          <span className="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_5px_rgba(52,211,153,0.8)]" />
+                          수집 가동 중 ({daemonStatus.interval_seconds}초 주기)
+                        </span>
+                      )}
+                      {daemonStatus?.state === "PAUSED" && (
+                        <span className="px-2 py-0.5 text-[11px] bg-amber-500/20 text-amber-400 border border-amber-500/30 rounded-full font-semibold">
+                          일시 중단됨
+                        </span>
+                      )}
+                      {(!daemonStatus || daemonStatus.state === "IDLE" || daemonStatus.state === "STOPPED") && (
+                        <span className="px-2 py-0.5 text-[11px] bg-slate-800 text-slate-400 border border-slate-700 rounded-full">
+                          정지 상태
+                        </span>
+                      )}
+                    </h2>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      모든 활성 Seed를 주기적으로 폴링하여 신규 글만 탐색 및 고속 적재 (0% GPU)
+                    </p>
+                  </div>
+                </div>
+
+                {/* 중앙: 3개 상태 지표 */}
+                <div className="grid grid-cols-3 gap-2 md:gap-3 bg-slate-950/70 border border-slate-800 rounded-lg p-2.5 text-xs flex-1 max-w-xl">
+                  <div>
+                    <div className="text-slate-500 text-[10px] md:text-[11px]">다음 수집 주기까지</div>
+                    <div className="text-base md:text-lg font-bold font-mono text-emerald-400 mt-0.5">
+                      {daemonStatus?.state === "RUNNING" ? `${daemonStatus.seconds_to_next_cycle || 0}초` : "-"}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-slate-500 text-[10px] md:text-[11px]">누적 수집 회차</div>
+                    <div className="text-base md:text-lg font-bold font-mono text-white mt-0.5">
+                      {daemonStatus?.cycle_count || 0}
+                      <span className="text-xs text-slate-500 font-normal ml-0.5">회</span>
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-slate-500 text-[10px] md:text-[11px]">현재 스캔 대상</div>
+                    <div className="text-xs md:text-sm font-semibold text-indigo-300 truncate mt-1" title={daemonStatus?.current_running_seed_name || ""}>
+                      {daemonStatus?.current_running_seed_name || (daemonStatus?.state === "RUNNING" ? "대기 중" : "정지")}
+                    </div>
+                  </div>
+                </div>
+
+                {/* 우측: 수집 주기 설정 & 제어 버튼 */}
+                <div className="flex items-center gap-3 self-end lg:self-center">
+                  <div className="flex items-center gap-1.5 text-xs">
+                    <span className="text-slate-400 text-xs">주기:</span>
+                    <input
+                      type="number"
+                      min={10}
+                      max={600}
+                      step={10}
+                      value={daemonIntervalInput}
+                      onChange={(e) => setDaemonIntervalInput(Number(e.target.value))}
+                      disabled={controllingDaemon}
+                      className="w-14 px-1.5 py-1 bg-slate-950 border border-slate-700 rounded text-center text-white font-mono text-xs focus:outline-none focus:border-indigo-500"
+                    />
+                    <span className="text-slate-400 text-xs">초</span>
+                    {daemonStatus?.state === "RUNNING" && daemonIntervalInput !== daemonStatus.interval_seconds && (
+                      <button
+                        onClick={() => handleStartDaemon(daemonIntervalInput)}
+                        className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-indigo-400 text-[11px] font-medium rounded border border-indigo-500/30"
+                      >
+                        적용
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    {daemonStatus?.state !== "RUNNING" ? (
+                      <button
+                        onClick={() => handleStartDaemon()}
+                        disabled={controllingDaemon}
+                        className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 shadow transition disabled:opacity-50"
+                      >
+                        <Play className="w-3.5 h-3.5 fill-current" />
+                        {daemonStatus?.state === "PAUSED" ? "수집 재개" : "지속 수집 시작"}
+                      </button>
+                    ) : (
+                      <button
+                        onClick={handlePauseDaemon}
+                        disabled={controllingDaemon}
+                        className="px-3 py-1.5 bg-amber-600/20 hover:bg-amber-600/40 text-amber-300 border border-amber-500/40 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition disabled:opacity-50"
+                      >
+                        <Pause className="w-3.5 h-3.5" />
+                        일시 중단
+                      </button>
+                    )}
+
+                    <button
+                      onClick={handleStopDaemon}
+                      disabled={controllingDaemon || (!daemonStatus || daemonStatus.state === "STOPPED" || daemonStatus.state === "IDLE")}
+                      className="px-3 py-1.5 bg-slate-800 hover:bg-rose-900/40 text-slate-300 hover:text-rose-300 border border-slate-700 hover:border-rose-500/40 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition disabled:opacity-30"
+                    >
+                      <Square className="w-3 h-3 fill-current" />
+                      완전 정지
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* 2단 (하단): 🧠 단일 직렬 GPU 작업 큐 & 듀얼 서브시스템 (텍스트 NLP & 비전 Image-to-Text) 제어 허브 */}
+            <div className="bg-slate-900 border border-purple-500/30 rounded-xl p-4 md:p-5 relative overflow-hidden shadow-lg space-y-4">
+              {/* 상단 통합 헤더 & 직렬 큐 상태 */}
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2.5 bg-purple-500/10 border border-purple-500/20 rounded-lg text-purple-400">
+                    <Cpu className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h2 className="text-base font-bold text-white flex items-center gap-2">
+                      GPU 단일 직렬 작업 큐 워커
+                      <span className="px-2 py-0.5 text-[10px] bg-purple-500/20 text-purple-300 border border-purple-500/30 rounded-full font-bold flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full bg-purple-400 shadow-[0_0_5px_rgba(192,132,252,0.8)]" />
+                        단일 GPU 순차 실행 (Ollama 충돌 방지)
+                      </span>
+                    </h2>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      텍스트 NLP와 비전 이미지 처리를 분리 제어하며, GPU에서는 1건씩 안전하게 Serial FIFO로 처리합니다.
+                    </p>
+                  </div>
+                </div>
+
+                {/* 현재 실행 중인 작업 표시 */}
+                <div className="px-3 py-1.5 bg-slate-950 border border-slate-800 rounded-lg text-xs flex items-center gap-2">
+                  <span className="text-slate-500">현재 GPU 처리:</span>
+                  {gpuStatus?.current_task ? (
+                    <span className="text-purple-300 font-semibold flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-purple-400 shadow-[0_0_6px_rgba(192,132,252,0.9)]" />
+                      [{gpuStatus.current_task.type === "vision" ? "🖼️ 비전" : "📝 텍스트"}] {gpuStatus.current_task.title}
+                    </span>
+                  ) : (
+                    <span className="text-slate-400 font-mono">대기 중 (IDLE)</span>
+                  )}
+                </div>
+              </div>
+
+              {/* 듀얼 서브시스템 2단 분리 제어 영역 */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* [서브시스템 1]: 📝 텍스트 NLP 데이터 정제 */}
+                <div className="p-3.5 bg-slate-950/70 border border-slate-800/90 rounded-xl space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5 text-xs font-bold text-purple-300">
+                      <FileText className="w-4 h-4 text-purple-400" />
+                      1. 텍스트 NLP 정제 (요약/감성/엔티티)
+                    </div>
+                    {gpuStatus?.text_state === "RUNNING" && (
+                      <span className="px-1.5 py-0.5 text-[10px] bg-purple-500/20 text-purple-300 border border-purple-500/30 rounded font-semibold">
+                        🟢 NLP 가동
+                      </span>
+                    )}
+                    {gpuStatus?.text_state === "PAUSED" && (
+                      <span className="px-1.5 py-0.5 text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded font-semibold">
+                        🟡 일시중지
+                      </span>
+                    )}
+                    {(!gpuStatus || gpuStatus.text_state === "IDLE" || gpuStatus.text_state === "STOPPED") && (
+                      <span className="px-1.5 py-0.5 text-[10px] bg-slate-800 text-slate-400 rounded">
+                        ⚪ 정지
+                      </span>
+                    )}
+                  </div>
+
+                  {/* 텍스트 큐 수치 */}
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div className="bg-slate-900/90 p-2 rounded-lg border border-slate-800">
+                      <div className="text-[10px] text-slate-500">Text 대기 큐</div>
+                      <div className="text-base font-bold font-mono text-amber-400">
+                        {gpuStatus?.text_pending_count || 0}건
+                      </div>
+                    </div>
+                    <div className="bg-slate-900/90 p-2 rounded-lg border border-slate-800">
+                      <div className="text-[10px] text-slate-500">정제 완료</div>
+                      <div className="text-base font-bold font-mono text-purple-400">
+                        {gpuStatus?.text_processed_count || 0}건
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 텍스트 제어 버튼 & 모델 */}
+                  <div className="flex items-center justify-between gap-2 pt-1">
+                    <select
+                      value={textModelName}
+                      onChange={(e) => {
+                        setTextModelName(e.target.value);
+                        if (gpuStatus?.text_state === "RUNNING") handleStartTextWorker(e.target.value);
+                      }}
+                      className="bg-slate-900 border border-slate-700 text-purple-300 rounded px-2 py-1 text-[11px] focus:outline-none"
+                    >
+                      {installedModels.map((m) => (
+                        <option key={m} value={m}>
+                          {m} {m.includes("e4b") ? "(추천)" : ""}
+                        </option>
+                      ))}
+                    </select>
+
+                    <div className="flex items-center gap-1.5">
+                      {gpuStatus?.text_state !== "RUNNING" ? (
+                        <button
+                          onClick={() => handleStartTextWorker()}
+                          disabled={controllingText}
+                          className="px-2.5 py-1 bg-purple-600 hover:bg-purple-500 text-white rounded-lg text-xs font-semibold flex items-center gap-1 shadow transition disabled:opacity-50"
+                        >
+                          <Play className="w-3 h-3 fill-current" />
+                          {gpuStatus?.text_state === "PAUSED" ? "재개" : "시작"}
+                        </button>
+                      ) : (
+                        <button
+                          onClick={handlePauseTextWorker}
+                          disabled={controllingText}
+                          className="px-2.5 py-1 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-xs font-semibold flex items-center gap-1 shadow transition disabled:opacity-50"
+                          title="텍스트 NLP 작업을 일시 중지합니다"
+                        >
+                          <Pause className="w-3 h-3" />
+                          일시중지
+                        </button>
+                      )}
+
+                      <button
+                        onClick={handleStopTextWorker}
+                        disabled={controllingText || (!gpuStatus || gpuStatus.text_state === "STOPPED" || gpuStatus.text_state === "IDLE")}
+                        className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-400 rounded-lg text-xs transition disabled:opacity-30"
+                      >
+                        <Square className="w-2.5 h-2.5 fill-current" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* [서브시스템 2]: 🖼️ 비전 Image-to-Text (캡셔닝 & 본문 주입) */}
+                <div className="p-3.5 bg-slate-950/70 border border-slate-800/90 rounded-xl space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5 text-xs font-bold text-cyan-300">
+                      <Eye className="w-4 h-4 text-cyan-400" />
+                      2. 비전 Image-to-Text (본문 주입)
+                    </div>
+                    {gpuStatus?.vision_state === "RUNNING" && (
+                      <span className="px-1.5 py-0.5 text-[10px] bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 rounded font-semibold">
+                        🟢 비전 가동
+                      </span>
+                    )}
+                    {gpuStatus?.vision_state === "PAUSED" && (
+                      <span className="px-1.5 py-0.5 text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded font-semibold">
+                        🟡 일시중지
+                      </span>
+                    )}
+                    {(!gpuStatus || gpuStatus.vision_state === "IDLE" || gpuStatus.vision_state === "STOPPED") && (
+                      <span className="px-1.5 py-0.5 text-[10px] bg-slate-800 text-slate-400 rounded">
+                        ⚪ 정지
+                      </span>
+                    )}
+                  </div>
+
+                  {/* 비전 큐 수치 */}
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div className="bg-slate-900/90 p-2 rounded-lg border border-slate-800">
+                      <div className="text-[10px] text-slate-500">Image 대기 큐</div>
+                      <div className="text-base font-bold font-mono text-cyan-400">
+                        {gpuStatus?.vision_pending_count || 0}건
+                      </div>
+                    </div>
+                    <div className="bg-slate-900/90 p-2 rounded-lg border border-slate-800">
+                      <div className="text-[10px] text-slate-500">캡셔닝 완료</div>
+                      <div className="text-base font-bold font-mono text-emerald-400">
+                        {gpuStatus?.vision_processed_count || 0}건
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 비전 제어 버튼 & 모델 */}
+                  <div className="flex items-center justify-between gap-2 pt-1">
+                    <select
+                      value={visionModelName}
+                      onChange={(e) => {
+                        setVisionModelName(e.target.value);
+                        if (gpuStatus?.vision_state === "RUNNING") handleStartVisionWorker(e.target.value);
+                      }}
+                      className="bg-slate-900 border border-slate-700 text-cyan-300 rounded px-2 py-1 text-[11px] focus:outline-none"
+                    >
+                      {installedModels.map((m) => (
+                        <option key={m} value={m}>
+                          {m} {m.includes("2b") || m.includes("4b") ? "(경량 비전)" : ""}
+                        </option>
+                      ))}
+                    </select>
+
+                    <div className="flex items-center gap-1.5">
+                      {gpuStatus?.vision_state !== "RUNNING" ? (
+                        <button
+                          onClick={() => handleStartVisionWorker()}
+                          disabled={controllingVision}
+                          className="px-2.5 py-1 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-xs font-semibold flex items-center gap-1 shadow transition disabled:opacity-50"
+                        >
+                          <Play className="w-3 h-3 fill-current" />
+                          {gpuStatus?.vision_state === "PAUSED" ? "재개" : "시작"}
+                        </button>
+                      ) : (
+                        <button
+                          onClick={handlePauseVisionWorker}
+                          disabled={controllingVision}
+                          className="px-2.5 py-1 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-xs font-semibold flex items-center gap-1 shadow transition disabled:opacity-50"
+                          title="비전 Image-to-Text 작업을 일시 중지합니다"
+                        >
+                          <Pause className="w-3 h-3" />
+                          일시중지
+                        </button>
+                      )}
+
+                      <button
+                        onClick={handleStopVisionWorker}
+                        disabled={controllingVision || (!gpuStatus || gpuStatus.vision_state === "STOPPED" || gpuStatus.vision_state === "IDLE")}
+                        className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-400 rounded-lg text-xs transition disabled:opacity-30"
+                      >
+                        <Square className="w-2.5 h-2.5 fill-current" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* 하단 안내 배지 */}
+              <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-400 bg-slate-950/40 p-2 rounded-lg border border-slate-800">
+                <span className="flex items-center gap-1">
+                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+                  이미지 파일은 메모리에서 텍스트 변환 후 즉시 삭제(용량 0MB 부담)되며, 원본 절대 URL은 메타데이터에 보존됩니다.
+                </span>
+                <span className="font-mono text-slate-400">
+                  전체 DB 기사: <strong className="text-white">{gpuStatus?.total_articles || 0}</strong>건
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* 다차원 실시간 Horizon 스트림 & 실시간 활동 스트림 피드 */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* 좌측 (2 Cols): 🌊 MultiLane Horizon 실시간 스트림 파형 (Image 2 스타일) */}
+            <div className="lg:col-span-2">
+              <MultiLaneStreamChart
+                initialRange={timeSeriesRange}
+                autoRefreshInterval={2000}
+                onRangeChange={(r) => {
+                  setTimeSeriesRange(r);
+                  fetchTimeSeries(r, timeSeriesSourceId);
+                }}
+              />
+            </div>
+
+            {/* 우측 (1 Col): 🔴 실시간 시각화 활동 스트림 (Live Activity Ticker) */}
+            <div className="bg-slate-900/70 border border-slate-800 rounded-xl p-5 space-y-3 flex flex-col">
+              <div className="flex items-center justify-between border-b border-slate-800/80 pb-2.5">
+                <div className="flex items-center gap-2">
+                  <Radio className="w-4 h-4 text-rose-400" />
+                  <h2 className="text-sm font-bold text-white">
+                    실시간 수집 활동 스트림
+                  </h2>
+                </div>
+                <span className="text-[11px] text-slate-400 flex items-center gap-1.5 font-mono">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_5px_rgba(52,211,153,0.8)]" />
+                  Live (3초 갱신)
+                </span>
+              </div>
+
+              {/* 실시간 이벤트 목록 */}
+              <div className="flex-1 overflow-y-auto max-h-[310px] space-y-2.5 pr-1 text-xs">
+                {recentEvents.map((ev) => (
+                  <div
+                    key={ev.id}
+                    className="p-2.5 bg-slate-950/60 border border-slate-800/80 rounded-lg space-y-1.5 hover:border-slate-700 transition"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5">
+                        {ev.event_type === "seed_scan" && (
+                          <span className="px-1.5 py-0.5 bg-purple-500/20 text-purple-300 border border-purple-500/30 rounded text-[10px] font-bold">
+                            SEED
+                          </span>
+                        )}
+                        {ev.event_type === "article_ingest" && (
+                          <span className="px-1.5 py-0.5 bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 rounded text-[10px] font-bold">
+                            기사
+                          </span>
+                        )}
+                        {ev.event_type === "image_ingest" && (
+                          <span className="px-1.5 py-0.5 bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded text-[10px] font-bold">
+                            이미지
+                          </span>
+                        )}
+                        {ev.event_type === "llm_enrich" && (
+                          <span className="px-1.5 py-0.5 bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 rounded text-[10px] font-bold">
+                            LLM 정제
+                          </span>
+                        )}
+                        <span className="text-slate-400 font-medium text-[11px] truncate max-w-[100px]">
+                          {ev.source_name || "수집원"}
+                        </span>
+                      </div>
+                      <span className="text-[10px] text-slate-500 font-mono">
+                        {new Date(ev.created_at).toLocaleTimeString("ko-KR")}
+                      </span>
+                    </div>
+
+                    <div className="text-slate-200 font-medium line-clamp-1">
+                      {ev.url ? (
+                        <a href={ev.url} target="_blank" rel="noreferrer" className="hover:text-indigo-400 transition">
+                          {ev.title}
+                        </a>
+                      ) : (
+                        ev.title
+                      )}
+                    </div>
+
+                    {/* 이미지 썸네일 미리보기 */}
+                    {ev.image_url && (
+                      <div className="pt-1">
+                        <img
+                          src={ev.image_url}
+                          alt="미디어 썸네일"
+                          className="h-14 w-auto rounded border border-slate-700 object-cover max-w-full"
+                          onError={(e: any) => { e.currentTarget.style.display = "none"; }}
+                        />
+                      </div>
+                    )}
+
+                    {/* LLM 요약 미리보기 */}
+                    {ev.event_type === "llm_enrich" && ev.details?.summary_preview && (
+                      <div className="text-[11px] text-slate-400 bg-slate-900/80 p-1.5 rounded border border-slate-800">
+                        {ev.details.summary_preview}...
+                      </div>
+                    )}
+                  </div>
+                ))}
+
+                {recentEvents.length === 0 && (
+                  <div className="py-12 text-center text-slate-500 text-xs">
+                    아직 기록된 실시간 수집 이벤트가 없습니다. 지속 수집을 가동해보세요.
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
           {/* KPI 카드 4종 */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-4">

@@ -19,7 +19,7 @@ class VisionTranscriber:
     """
     def __init__(self, model_name: Optional[str] = None):
         self.ollama_url = config.OLLAMA_BASE_URL
-        self.model_name = model_name or "llama3.2-vision"
+        self.model_name = model_name or "qwen3.5:2b-mlx"
         self.gemini_key = config.GEMINI_API_KEY
 
     def _get_image_headers(self, image_url: str, referer: Optional[str] = None) -> Dict[str, str]:

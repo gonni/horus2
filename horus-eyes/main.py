@@ -60,4 +60,9 @@ def main():
         asyncio.run(run_live_crawl(max_articles=args.max_articles))
 
 if __name__ == "__main__":
-    main()
+    import sys
+    try:
+        main()
+    except KeyboardInterrupt:
+        logger.info("\n[HorusEyes] Crawler stopped by user (Ctrl+C). Exiting cleanly.")
+        sys.exit(0)
