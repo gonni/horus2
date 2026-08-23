@@ -128,11 +128,15 @@ class CrawlTestResponse(BaseModel):
 class CrawlDashboardStats(BaseModel):
     total_articles: int
     today_articles: int
+    articles_24h: int = 0
+    peak_tps_24h: float = 0.0
+    success_rate_24h: float = 99.4
     active_sources_count: int
     current_tps: float
     rate_limit_policy: str
     recent_articles: List[Dict[str, Any]]
     sources_summary: List[Dict[str, Any]]
+
 
 class WrapperRules(BaseModel):
     link_selector: Optional[str] = ""
@@ -354,10 +358,18 @@ class TimeSeriesMetricsResponse(BaseModel):
     total_images: int = 0
     total_llm_enriched: int = 0
 
-# 🌊 다중 레인 Horizon 실시간 스트림 스키마 (초단위 호출 틱 & TPS 정밀 모니터링)
+# 🌊 다중 레인 Horizon 실시간 스트림 스키마 (초단위 호출 틱 & 이벤트 타입별 정밀 타임라인)
+class BucketEventBreakdown(BaseModel):
+    seed_scan: int = 0
+    article_ingest: int = 0
+    image_ingest: int = 0
+    llm_enrich: int = 0
+    error: int = 0
+    total: int = 0
+
 class CallTick(BaseModel):
     id: int
-    event_type: str  # 'seed_scan', 'article_ingest', 'image_ingest', 'llm_enrich'
+    event_type: str  # 'seed_scan', 'article_ingest', 'image_ingest', 'llm_enrich', 'error'
     time_str: str
     title: Optional[str] = None
     url: Optional[str] = None
@@ -372,11 +384,14 @@ class LaneSeries(BaseModel):
     secondary_color: Optional[str] = None
     values: List[float] = Field(default_factory=list)  # Instantaneous TPS (0.0 ~ 1.0)
     raw_counts: List[int] = Field(default_factory=list)
+    type_breakdown: List[BucketEventBreakdown] = Field(default_factory=list) # 각 시점별 호출 종류 세분화
     total_count: int = 0
     peak_tps: float = 0.0
     avg_tps: float = 0.0
+    current_instant_count: int = 0 # 가장 최근 시점 호출 수
     max_tps_limit: float = 1.0
     recent_calls: List[CallTick] = Field(default_factory=list)
+
 
 class MultiLaneStreamResponse(BaseModel):
     range: str
@@ -390,12 +405,118 @@ class MultiLaneStreamResponse(BaseModel):
     duplicate_count: int = 0
     latest_event_time: Optional[str] = None
 
+# 🚀 지능형 신규 4대 수집기 스키마 (US Market, Community Spike, Smart Auto Seed, Topic Graph)
+class SmartCollectorCreate(BaseModel):
+    name: str = Field(description="수집기 이름")
+    collector_type: str = Field(description="수집 유형: us_market_signal, community_spike, smart_auto_seed, topic_graph")
+    target_url_or_query: str = Field(description="대상 URL 또는 검색어/서브레딧")
+    category: str = Field(default="news", description="카테고리: news, community, stock")
+    crawl_interval_minutes: int = Field(default=15, description="수집 주기(분)")
+    is_active: bool = Field(default=True, description="활성화 여부")
+    config: Optional[Dict[str, Any]] = Field(default_factory=dict, description="유형별 추가 파라미터")
 
+class SmartCollectorUpdate(BaseModel):
+    name: Optional[str] = None
+    target_url_or_query: Optional[str] = None
+    category: Optional[str] = None
+    crawl_interval_minutes: Optional[int] = None
+    is_active: Optional[bool] = None
+    config: Optional[Dict[str, Any]] = None
 
+class SmartCollectorTestRequest(BaseModel):
+    collector_type: str = Field(description="수집 유형: us_market_signal, community_spike, smart_auto_seed, topic_graph")
+    target: str = Field(description="대상 검색어 / Subreddit / Seed URL / Topic")
+    language: Optional[str] = Field(default="en", description="언어 코드 (en, ko)")
+    max_results: Optional[int] = Field(default=10, description="최대 결과 수")
+    options: Optional[Dict[str, Any]] = Field(default_factory=dict, description="추가 옵션 (mode, min_score 등)")
 
+class SmartCollectorTestResponse(BaseModel):
+    status: str
+    collector_type: str
+    target: str
+    total_count: int
+    results: List[Dict[str, Any]] = Field(default_factory=list)
+    extra_meta: Optional[Dict[str, Any]] = None
+    message: str
 
+class TopicGraphExpandRequest(BaseModel):
+    topic: str = Field(description="확장할 중심 주제어")
+    depth: Optional[int] = Field(default=1, description="그래프 탐색 깊이")
+    limit_terms: Optional[int] = Field(default=8, description="연관어 최대 개수")
 
+class TopicGraphExpandResponse(BaseModel):
+    center_topic: str
+    nodes: List[Dict[str, Any]] = Field(default_factory=list)
+    links: List[Dict[str, Any]] = Field(default_factory=list)
+    expanded_keywords: List[str] = Field(default_factory=list)
+    suggested_query: str
 
+# 🌐 수집 대상 사이트/피드 (Target Sites & Financial Feeds) 관리 스키마
+class TargetSiteCreate(BaseModel):
+    name: str = Field(description="사이트 또는 매체 이름 (예: CNBC 마켓 속보, Yahoo Finance NVDA)")
+    url: str = Field(description="대상 웹사이트 URL 또는 RSS/Feed 엔드포인트")
+    category: str = Field(default="us_market", description="카테고리: us_market, macro, tech_ai, earnings, crypto, sec_edgar, domestic_news")
+    is_active: bool = Field(default=True, description="활성화 여부")
+    description: Optional[str] = Field(default="", description="설명 또는 메모")
+
+class TargetSiteRead(BaseModel):
+    id: int
+    name: str
+    url: str
+    category: str
+    is_active: bool
+    is_builtin: bool = False
+    description: Optional[str] = ""
+    created_at: Optional[str] = None
+
+class TargetSiteTestRequest(BaseModel):
+    url: str = Field(description="테스트 대상 사이트 또는 RSS 피드 URL")
+    publisher_name: Optional[str] = Field(default="", description="언론사/매체명")
+    max_results: Optional[int] = Field(default=10, description="최대 결과 수")
+
+# 🛸 Subreddit 카탈로그 관리 스키마
+class SubredditCreate(BaseModel):
+    name: str = Field(description="Subreddit 식별자 (예: UFOs, cars, wallstreetbets)")
+    label: Optional[str] = Field(default="", description="표시 레이블 (예: UFO / 외계 미스터리)")
+    category: str = Field(default="custom", description="카테고리: ufo_mystery, cars_ev, finance, tech_ai, world_news, gaming, custom")
+    description: Optional[str] = Field(default="", description="Subreddit 설명")
+    icon: Optional[str] = Field(default="📌", description="대표 이모지/아이콘")
+
+class SubredditRead(BaseModel):
+    id: int
+    name: str
+    display_name: str
+    label: str
+    category: str
+    category_label: str
+    description: str
+    icon: str
+    is_builtin: bool = False
+    created_at: Optional[str] = None
+
+# 💬 Reddit/Article 댓글 관리 스키마
+class ArticleCommentRead(BaseModel):
+    id: Optional[int] = None
+    article_id: Optional[int] = None
+    comment_ext_id: str
+    author: Optional[str] = "익명"
+    content: str
+    score: int = 0
+    depth: int = 0
+    published_at: Optional[str] = None
+    sentiment_score: Optional[float] = 0.0
+    tickers: Optional[List[str]] = Field(default_factory=list)
+
+class ArticleCommentSyncResponse(BaseModel):
+    status: str
+    article_id: int
+    article_title: str
+    total_synced_comments: int
+    comments: List[ArticleCommentRead] = Field(default_factory=list)
+    message: str = ""
+
+class CollectorActionRequest(BaseModel):
+    action: str = Field(description="제어 액션: start, pause, stop, run_once")
 
 
 

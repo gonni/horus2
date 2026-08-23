@@ -2,9 +2,9 @@ import asyncio
 import logging
 from typing import List, Optional
 from bs4 import BeautifulSoup
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse, urlunparse, parse_qsl, urlencode
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
-from sqlalchemy import select, text
+from sqlalchemy import select, text, bindparam
 
 from crawler.config import config
 from crawler.fetcher import ContentFetcher
@@ -19,6 +19,57 @@ class CrawlPipeline:
         self.engine = create_async_engine(config.SQLALCHEMY_DATABASE_URI)
         self.session_factory = async_sessionmaker(self.engine, expire_on_commit=False)
 
+    def _canonicalize_url(self, url: str) -> str:
+        if not url:
+            return ""
+        try:
+            parsed = urlparse(url)
+            query_params = parse_qsl(parsed.query)
+            clean_params = [
+                (k, v) for k, v in query_params 
+                if not k.startswith("utm_") and k not in ["ref", "rc", "_gl", "source", "sid", "fbclid"]
+            ]
+            clean_query = urlencode(clean_params)
+            clean_url = urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, clean_query, ""))
+            return clean_url.rstrip("/")
+        except Exception:
+            return url.strip()
+
+    async def _filter_new_urls(self, urls: List[str]) -> List[str]:
+        if not urls:
+            return []
+        
+        url_candidates = []
+        for u in urls:
+            if not u:
+                continue
+            clean = self._canonicalize_url(u)
+            url_candidates.append(u)
+            if clean and clean != u:
+                url_candidates.append(clean)
+        
+        if not url_candidates:
+            return []
+
+        async with self.session_factory() as session:
+            stmt = text("SELECT url FROM articles WHERE url IN :urls").bindparams(
+                bindparam("urls", expanding=True)
+            )
+            res = await session.execute(stmt, {"urls": tuple(set(url_candidates))})
+            existing = set(r[0] for r in res.fetchall())
+            existing_canon = set(self._canonicalize_url(r) for r in existing)
+            existing.update(existing_canon)
+
+        new_urls = []
+        seen = set()
+        for u in urls:
+            canon = self._canonicalize_url(u)
+            if u not in existing and canon not in existing and canon not in seen:
+                seen.add(canon)
+                new_urls.append(u)
+
+        return new_urls
+
     async def run_source_crawl(self, source_id: int, base_url: str, hints: Optional[dict] = None, max_articles: int = 5):
         logger.info(f"Starting crawl for source #{source_id}: {base_url}")
         
@@ -31,14 +82,22 @@ class CrawlPipeline:
         # 2. 링크 추출 (Seed에 설정된 link_selector 힌트 전달)
         link_selector = hints.get("link_selector") if hints else None
         article_urls = self._extract_links(base_url, list_html, link_selector=link_selector)
-        logger.info(f"Found {len(article_urls)} candidate links. Processing top {max_articles}...")
+        
+        # 3. DB 중복 대조 및 신규 URL 필터링 (이미 DB에 있는 기사는 네트워크 요청 전 100% Skip)
+        new_urls = await self._filter_new_urls(article_urls)
+        logger.info(f"Source #{source_id}: Found {len(article_urls)} candidate links, {len(new_urls)} NEW uncollected links.")
 
-        # 3. 각 기사 수집 & AI 구조화 추출
-        for url in article_urls[:max_articles]:
+        if not new_urls:
+            logger.info(f"Source #{source_id}: All articles already collected in DB. Skipping.")
+            return
+
+        # 4. 신규 기사만 수집 & AI 구조화 추출
+        for url in new_urls[:max_articles]:
             try:
                 await self._process_single_article(source_id, url, hints)
             except Exception as e:
                 logger.error(f"Error processing article {url}: {e}")
+
 
     def extract_links_with_meta(self, base_url: str, html: str, link_selector: Optional[str] = None) -> List[dict]:
         """

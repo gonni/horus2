@@ -21,7 +21,8 @@ horus-dev/
 ├── horus-eyes/          # [AI 크롤러] Playwright, Trafilatura, LLM Pydantic 구조화 파서, Vision LLM
 ├── horus-nlp/           # [NLP & 그래프] Kiwi 형태소 엔진, TimescaleDB 실시간 TF, Neo4j 적재
 ├── horus-quant/         # [종가매매 퀀트] BrainStocking 2.0 (15:10 추출 / 09:10 성과 검증)
-├── horus-web/           # [프론트엔드] Next.js, TypeScript, TailwindCSS, 3D Graph, ECharts
+├── horus-admin/         # [관리자 UI (Port 3001)] 5대 지능형 스마트 수집기 허브 & 시드 크롤러 관리 콘솔
+├── horus-web/           # [서비스 UI (Port 3000)] 뉴스 인텔리전스, 3D Graph, 퀀트 모니터링 모던 대시보드
 ├── scripts/             # [스크립트] 원클릭 셋업(setup.sh) 및 DB 초기화(init_db.sh)
 ├── SETUP_GUIDE.md       # [가이드] 타 PC 개발 환경 설정 및 트러블슈팅 매뉴얼
 └── README.md
@@ -41,10 +42,10 @@ horus-dev/
 # 실행 권한 부여 및 셋업 스크립트 실행
 chmod +x scripts/*.sh
 ./scripts/setup.sh
-```
 
-> [!NOTE]
-> 단계별 수동 설치 및 상세 트러블슈팅은 [**SETUP_GUIDE.md**](./SETUP_GUIDE.md)를 참고하세요.
+# 백엔드 + 어드민 + 서비스 UI 전체 통합 실행
+./run_all.sh
+```
 
 ---
 
@@ -54,24 +55,35 @@ chmod +x scripts/*.sh
 
 ### 1. 백엔드 코어 서버 실행 (`horus-server`)
 ```bash
-source .venv/bin/activate
-cd horus-server
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+./run_server.sh
+# 또는: cd horus-server && uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 * **Swagger API 문서**: [http://localhost:8000/docs](http://localhost:8000/docs)
 * **ReDoc API 문서**: [http://localhost:8000/redoc](http://localhost:8000/redoc)
 
 ---
 
-### 2. 프론트엔드 웹 대시보드 실행 (`horus-web`)
+### 2. 관리자 콘솔 대시보드 실행 (`horus-admin`)
 ```bash
-cd horus-web
-npm run dev
+./run_admin.sh
+# 또는: cd horus-admin && npm run dev (Port 3001)
 ```
-* **웹 대시보드 메인**: [http://localhost:3000](http://localhost:3000)
-* **수집 모니터링 & 백필 제어**: [http://localhost:3000/crawl-admin](http://localhost:3000/crawl-admin)
+* **관리자 콘솔 메인**: [http://localhost:3001](http://localhost:3001)
+* **5대 지능형 스마트 수집 허브**: [http://localhost:3001/smart-crawl](http://localhost:3001/smart-crawl)
+* **시드 크롤러 & 작업 관리**: [http://localhost:3001/crawl-admin](http://localhost:3001/crawl-admin)
+
+---
+
+### 3. 최종 사용자 서비스 웹 대시보드 실행 (`horus-web`)
+```bash
+./run_web.sh
+# 또는: cd horus-web && npm run dev (Port 3000)
+```
+* **서비스 대시보드 메인**: [http://localhost:3000](http://localhost:3000)
+* **뉴스 인텔리전스 & 추천**: [http://localhost:3000/news](http://localhost:3000/news)
 * **3D 지식그래프 시각화**: [http://localhost:3000/graph3d](http://localhost:3000/graph3d)
 * **종가매매 퀀트 대시보드**: [http://localhost:3000/quant](http://localhost:3000/quant)
+
 
 ---
 

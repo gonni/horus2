@@ -32,16 +32,14 @@ export default function Graph3DPage() {
   useEffect(() => {
     if (!graphData || !containerRef.current) return;
 
-    let isMounted = true;
-    let graphInstance: any = null;
+    let ForceGraph3D: any;
+    let graphInstance: any;
 
     import("3d-force-graph").then((module) => {
-      if (!isMounted || !containerRef.current) return;
+      ForceGraph3D = module.default;
+      containerRef.current!.innerHTML = "";
 
-      const ForceGraph3D: any = module.default;
-      containerRef.current.innerHTML = "";
-
-      graphInstance = ForceGraph3D()(containerRef.current)
+      graphInstance = ForceGraph3D()(containerRef.current!)
         .graphData(graphData)
         .nodeLabel((node: any) => `${node.name} (가중치: ${node.val})`)
         .nodeAutoColorBy("group")
@@ -59,20 +57,7 @@ export default function Graph3DPage() {
     });
 
     return () => {
-      isMounted = false;
-      if (graphInstance) {
-        try {
-          if (typeof graphInstance.pauseAnimation === "function") {
-            graphInstance.pauseAnimation();
-          }
-          if (typeof graphInstance._destructor === "function") {
-            graphInstance._destructor();
-          }
-        } catch (e) {
-          console.warn("Graph destructor error:", e);
-        }
-      }
-      if (containerRef.current) {
+      if (graphInstance && containerRef.current) {
         containerRef.current.innerHTML = "";
       }
     };
@@ -113,14 +98,14 @@ export default function Graph3DPage() {
       {/* 3D 캔버스 영역 */}
       <div className="relative w-full h-[650px] bg-slate-950 border border-slate-800 rounded-2xl overflow-hidden shadow-2xl">
         {loading && (
-          <div className="absolute inset-0 z-10 flex items-center justify-center bg-slate-950/80 text-slate-400 text-sm">
+          <div className="absolute inset-0 z-10 flex items-center justify-center bg-slate-950/70 backdrop-blur-sm text-slate-400 text-sm">
             Neo4j 그래프 관계망을 로딩 중입니다...
           </div>
         )}
         <div ref={containerRef} className="w-full h-full" />
 
         {/* 안내 뱃지 */}
-        <div className="absolute bottom-4 left-4 bg-slate-900/90 border border-slate-800 px-3 py-2 rounded-lg text-xs text-slate-400 flex items-center gap-2">
+        <div className="absolute bottom-4 left-4 bg-slate-900/80 backdrop-blur border border-slate-800 px-3 py-2 rounded-lg text-xs text-slate-400 flex items-center gap-2">
           <Info className="w-4 h-4 text-indigo-400" />
           <span>마우스 드래그로 360° 회전, 휠로 줌인/줌아웃 가능합니다.</span>
         </div>

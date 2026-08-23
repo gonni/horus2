@@ -134,7 +134,7 @@ export const MultiLaneStreamChart: React.FC<MultiLaneStreamChartProps> = ({
     const numLanes = Math.max(1, lanes.length);
     const topAxisHeight = 26;
     const leftLabelWidth = 150;
-    const rightValueWidth = 70;
+    const rightValueWidth = 70; // Cubism 우측 순간 호출값 표시 영역
     const chartWidth = Math.max(10, width - leftLabelWidth - rightValueWidth);
     const chartHeight = Math.max(10, height - topAxisHeight - 8);
     const laneHeight = chartHeight / numLanes;
@@ -178,7 +178,7 @@ export const MultiLaneStreamChart: React.FC<MultiLaneStreamChartProps> = ({
     ctx.stroke();
 
     // 4. 레인별 Cubism Horizon / 스택 이벤트 바코드 렌더링
-    const isSecondLevel = range === "1m";
+    const isSecondLevel = range === "1m"; // 초단위 뷰 모드 여부
 
     lanes.forEach((lane, laneIdx) => {
       const laneY = topAxisHeight + laneIdx * laneHeight;
@@ -318,13 +318,15 @@ export const MultiLaneStreamChart: React.FC<MultiLaneStreamChartProps> = ({
             }
           }
         } else {
+          // 유휴(0회) 시점: 얇은 슬레이트 베이스라인 2px 점
           ctx.fillStyle = "rgba(51, 65, 85, 0.4)";
           ctx.fillRect(x, laneBottom - 2, barWidth, 1);
         }
       }
+
     });
 
-    // 5. 마우스 호버 가이드라인
+    // 5. 마우스 호버 가이드라인 (Cubism Interactive Crosshair Ruler)
     if (hoverInfo && hoverInfo.x >= leftLabelWidth && hoverInfo.x <= leftLabelWidth + chartWidth) {
       ctx.strokeStyle = "rgba(255, 255, 255, 0.75)";
       ctx.lineWidth = 1.2;
@@ -433,6 +435,9 @@ export const MultiLaneStreamChart: React.FC<MultiLaneStreamChartProps> = ({
 
   return (
     <div className="space-y-3.5">
+      {/* ============================================================================== */}
+      {/* 1. 상단 트래픽 현황 & 호출 종류별 범례 및 시간 범위 탭 (Cubism Style) */}
+      {/* ============================================================================== */}
       <div className="bg-slate-950 border border-slate-800 rounded-xl p-3.5 flex flex-col gap-3 shadow-inner">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800/80 pb-3">
           <div>
@@ -450,6 +455,7 @@ export const MultiLaneStreamChart: React.FC<MultiLaneStreamChartProps> = ({
             </p>
           </div>
 
+          {/* ⏱️ 시간 범위 탭 선택기 (1분 초단위 / 10분 / 1시간 / 24시간 / 7일) */}
           <div className="flex items-center gap-1 bg-slate-900 p-1 rounded-xl border border-slate-800 self-start sm:self-auto">
             {(
               [
@@ -475,6 +481,7 @@ export const MultiLaneStreamChart: React.FC<MultiLaneStreamChartProps> = ({
           </div>
         </div>
 
+        {/* 🎨 호출 종류별 색상 범례 및 라이브 제어 */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-2 text-xs">
             <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-[11px] font-medium bg-emerald-500/15 text-emerald-300 border-emerald-500/30">
@@ -527,6 +534,9 @@ export const MultiLaneStreamChart: React.FC<MultiLaneStreamChartProps> = ({
         </div>
       </div>
 
+      {/* ============================================================================== */}
+      {/* 2. Cubism.js 다중 레인 정밀 타임라인 차트 캔버스 */}
+      {/* ============================================================================== */}
       <div
         ref={containerRef}
         className="relative w-full h-[430px] bg-[#070b12] border border-slate-800 rounded-xl overflow-hidden shadow-2xl select-none"
@@ -538,6 +548,9 @@ export const MultiLaneStreamChart: React.FC<MultiLaneStreamChartProps> = ({
           className="w-full h-full block cursor-crosshair"
         />
 
+        {/* ============================================================================== */}
+        {/* 3. 인터랙티브 크로스헤어 정밀 팝오버 툴팁 */}
+        {/* ============================================================================== */}
         {hoverInfo && (
           <div
             className="absolute z-30 pointer-events-none bg-slate-900 border border-slate-700/90 rounded-xl p-3 shadow-2xl text-xs text-slate-200 min-w-[260px]"

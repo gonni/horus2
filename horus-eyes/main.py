@@ -25,10 +25,13 @@ async def run_live_crawl(max_articles: int = 5):
             sources = result.fetchall()
 
         logger.info(f"Loaded {len(sources)} active crawl sources.")
-        for src in sources:
-            source_id, name, base_url, hints = src
-            logger.info(f"Triggering slow crawl for: {name} ({base_url})")
-            await pipeline.run_source_crawl(source_id, base_url, hints=hints, max_articles=max_articles)
+        # 🚀 각 Seed별 독립 비동기 병렬 수집 (서로 다른 호스트는 무관하게 각자 max 1.0 TPS로 동시 수집)
+        tasks = [
+            pipeline.run_source_crawl(source_id, base_url, hints=hints, max_articles=max_articles)
+            for source_id, name, base_url, hints in sources
+        ]
+        await asyncio.gather(*tasks, return_exceptions=True)
+
 
     except Exception as e:
         logger.error(f"Crawler live execution failed: {e}")
