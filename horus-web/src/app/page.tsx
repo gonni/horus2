@@ -2,11 +2,11 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { api, RecommendedItem, StockClosingTarget, QuantStats } from "@/lib/api";
-import { Newspaper, TrendingUp, Share2, Sparkles, CheckCircle2, ArrowUpRight, Flame } from "lucide-react";
+import { api, Article, StockClosingTarget, QuantStats } from "@/lib/api";
+import { Newspaper, TrendingUp, Share2, Sparkles, CheckCircle2, ArrowUpRight, Clock, Bot } from "lucide-react";
 
 export default function DashboardPage() {
-  const [recommendations, setRecommendations] = useState<RecommendedItem[]>([]);
+  const [recentArticles, setRecentArticles] = useState<Article[]>([]);
   const [quantStats, setQuantStats] = useState<QuantStats | null>(null);
   const [closingTargets, setClosingTargets] = useState<StockClosingTarget[]>([]);
   const [loading, setLoading] = useState(true);
@@ -14,12 +14,13 @@ export default function DashboardPage() {
   useEffect(() => {
     async function loadData() {
       try {
-        const [recoRes, statsRes, targetsRes] = await Promise.all([
-          api.get("/reco/pick?limit=4"),
+        const [articlesRes, statsRes, targetsRes] = await Promise.all([
+          api.get("/articles?page_size=4"),
           api.get("/stock/quant-stats"),
           api.get("/stock/closing-targets?limit=3")
         ]);
-        setRecommendations(recoRes.data);
+        const items = Array.isArray(articlesRes.data?.items) ? articlesRes.data.items : (Array.isArray(articlesRes.data) ? articlesRes.data : []);
+        setRecentArticles(items);
         setQuantStats(statsRes.data);
         setClosingTargets(targetsRes.data);
       } catch (err) {
@@ -31,18 +32,6 @@ export default function DashboardPage() {
     loadData();
   }, []);
 
-  const handleArticleClick = async (articleId: number) => {
-    try {
-      await api.post("/reco/feedback", {
-        user_id: "dashboard_user",
-        article_id: articleId,
-        event_type: "click"
-      });
-    } catch (e) {
-      console.error("Feedback error:", e);
-    }
-  };
-
   return (
     <div className="space-y-8">
       {/* 상단 헤더 */}
@@ -51,7 +40,7 @@ export default function DashboardPage() {
           통합 인텔리전스 대시보드
         </h1>
         <p className="text-sm text-slate-400 mt-1">
-          실시간 AI 웹 크롤링, Multi-Armed Bandit 추천, Neo4j 지식 그래프 및 종가매매 퀀트 현황
+          실시간 AI 웹 크롤링, Ollama gemma4:e4b 자연어 분석, Neo4j 지식 그래프 및 종가매매 퀀트 현황
         </p>
       </div>
 
@@ -83,12 +72,12 @@ export default function DashboardPage() {
 
         <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-5 shadow-sm">
           <div className="flex items-center justify-between text-slate-400 text-sm">
-            <span>AI 추천 모델</span>
-            <Sparkles className="w-4 h-4 text-amber-400" />
+            <span>AI 자연어 분석</span>
+            <Bot className="w-4 h-4 text-amber-400" />
           </div>
-          <div className="mt-3 text-2xl font-bold text-white">Thompson Sampling</div>
+          <div className="mt-3 text-2xl font-bold text-white">gemma4:e4b</div>
           <div className="mt-1 text-xs text-amber-400 flex items-center gap-1">
-            <span>실시간 MAB 탐색/활용</span>
+            <span>Ollama 실시간 요약·감성</span>
           </div>
         </div>
 
@@ -104,12 +93,12 @@ export default function DashboardPage() {
 
       {/* 2열 메인 섹션 */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* MAB 추천 뉴스 */}
+        {/* 최신 수집 인텔리전스 뉴스 */}
         <div className="lg:col-span-2 bg-slate-900/50 border border-slate-800 rounded-xl p-6 space-y-4">
           <div className="flex items-center justify-between">
             <h2 className="text-lg font-semibold text-white flex items-center gap-2">
-              <Flame className="w-5 h-5 text-orange-400" />
-              MAB 실시간 추천 뉴스 (Pick)
+              <Newspaper className="w-5 h-5 text-indigo-400" />
+              최신 수집 인텔리전스 뉴스
             </h2>
             <Link href="/news" className="text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-1">
               전체 보기 <ArrowUpRight className="w-3.5 h-3.5" />
@@ -117,43 +106,48 @@ export default function DashboardPage() {
           </div>
 
           <div className="space-y-3">
-            {recommendations.length > 0 ? (
-              recommendations.map((item) => (
-                <div
-                  key={item.article.id}
-                  onClick={() => handleArticleClick(item.article.id)}
+            {recentArticles.length > 0 ? (
+              recentArticles.map((art) => (
+                <Link
+                  key={art.id}
+                  href="/news"
                   className="group block p-4 bg-slate-800/40 hover:bg-slate-800/80 border border-slate-800 hover:border-indigo-500/30 rounded-lg transition cursor-pointer"
                 >
                   <div className="flex items-start justify-between gap-4">
                     <div>
                       <div className="flex items-center gap-2 mb-1">
                         <span className="text-[11px] font-medium bg-indigo-500/10 text-indigo-400 px-2 py-0.5 rounded border border-indigo-500/20">
-                          {item.article.category || "뉴스"}
+                          {art.category || "뉴스"}
                         </span>
-                        <span className="text-xs text-slate-500">
-                          {new Date(item.article.published_at).toLocaleString()}
+                        <span className="text-xs text-slate-500 flex items-center gap-1">
+                          <Clock className="w-3 h-3" />
+                          {new Date(art.published_at).toLocaleString()}
                         </span>
                       </div>
                       <h3 className="text-sm font-medium text-slate-200 group-hover:text-indigo-300 transition">
-                        {item.article.title}
+                        {art.title}
                       </h3>
-                      {item.article.summary && (
+                      {art.summary ? (
                         <p className="text-xs text-slate-400 mt-1 line-clamp-2">
-                          {item.article.summary}
+                          {art.summary}
+                        </p>
+                      ) : (
+                        <p className="text-xs text-slate-500 mt-1 line-clamp-2">
+                          {art.content}
                         </p>
                       )}
                     </div>
                     <div className="text-right shrink-0">
-                      <span className="text-xs font-mono text-amber-400 bg-amber-500/10 px-2 py-1 rounded">
-                        MAB {item.mab_score}
+                      <span className="text-xs font-medium text-indigo-400 bg-indigo-500/10 px-2.5 py-1 rounded border border-indigo-500/20 flex items-center gap-1">
+                        <Bot className="w-3 h-3" /> 분석 가능
                       </span>
                     </div>
                   </div>
-                </div>
+                </Link>
               ))
             ) : (
               <div className="text-center py-8 text-slate-500 text-sm">
-                추천 기사를 로드 중이거나 등록된 기사가 없습니다.
+                수집된 최신 기사를 로드 중이거나 등록된 기사가 없습니다.
               </div>
             )}
           </div>

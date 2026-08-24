@@ -32,7 +32,7 @@ async def list_articles(
     total_res = await db.execute(count_query)
     total = total_res.scalar() or 0
 
-    query = query.order_by(desc(Article.published_at)).offset(offset).limit(page_size)
+    query = query.order_by(desc(Article.id)).offset(offset).limit(page_size)
     result = await db.execute(query)
     articles = result.scalars().all()
 
@@ -63,7 +63,7 @@ async def search_articles(
     query = (
         select(Article)
         .where(filter_cond)
-        .order_by(desc(Article.published_at))
+        .order_by(desc(Article.id))
         .offset(offset)
         .limit(page_size)
     )

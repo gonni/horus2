@@ -30,11 +30,8 @@ class HybridLLMGateway:
         elif force_provider == "ollama":
             return await self._call_ollama_with_fallback(prompt, system_instruction, temperature, fallback_to_gemini=False)
 
-        # 2. Dynamic Routing by Task Type
-        if task_type in ["realtime_api", "stock_analysis", "site_discovery"]:
-            return await self._call_gemini_with_fallback(prompt, system_instruction, temperature, fallback_to_ollama=True)
-        else:
-            return await self._call_ollama_with_fallback(prompt, system_instruction, temperature, fallback_to_gemini=True)
+        # 2. Dynamic Routing (Default: Ollama gemma4:e4b first)
+        return await self._call_ollama_with_fallback(prompt, system_instruction, temperature, fallback_to_gemini=True)
 
     async def _call_gemini_with_fallback(
         self, prompt: str, system_instruction: Optional[str], temperature: float, fallback_to_ollama: bool

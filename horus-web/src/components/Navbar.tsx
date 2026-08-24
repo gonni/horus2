@@ -7,8 +7,6 @@ import {
   Newspaper, 
   Share2, 
   TrendingUp, 
-  Shield,
-  ExternalLink,
   Bot
 } from "lucide-react";
 
@@ -57,20 +55,10 @@ export function Navbar() {
           </div>
 
           <div className="flex items-center gap-3">
-            <div className="flex items-center gap-1.5 text-xs text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/20">
-              <span className="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.8)]"></span>
-              Hybrid LLM Online
+            <div className="flex items-center gap-1.5 text-xs text-amber-400 bg-amber-500/10 px-2.5 py-1 rounded-full border border-amber-500/20">
+              <span className="w-2 h-2 rounded-full bg-amber-400 shadow-[0_0_6px_rgba(251,191,36,0.8)]"></span>
+              Ollama gemma4:e4b
             </div>
-            <a
-              href="http://localhost:3001"
-              target="_blank"
-              rel="noreferrer"
-              className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg bg-rose-500/15 text-rose-300 hover:bg-rose-500/25 border border-rose-500/30 transition shadow-sm"
-            >
-              <Shield className="w-3.5 h-3.5 text-rose-400" />
-              <span>관리자 콘솔 (:3001)</span>
-              <ExternalLink className="w-3 h-3 text-rose-400/70" />
-            </a>
           </div>
         </div>
       </div>

@@ -35,7 +35,7 @@ class Settings(BaseSettings):
 
     # LLM Settings
     OLLAMA_BASE_URL: str = "http://localhost:11434"
-    OLLAMA_MODEL: str = "qwen2.5:27b"
+    OLLAMA_MODEL: str = "gemma4:e4b"
     
     GEMINI_API_KEY: Optional[str] = None
     GEMINI_MODEL: str = "gemini-2.0-flash"

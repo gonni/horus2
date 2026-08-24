@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 import json
+import re
 
 from app.core.database import get_db
 from app.models.article import Article
@@ -32,48 +33,61 @@ async def analyze_article(
     if not article:
         raise HTTPException(status_code=404, detail="Article not found")
 
-    prompt = f"""
-다음 뉴스 기사를 분석하여 JSON 형식으로 결과를 출력해주세요.
+    prompt = f"""당신은 금융/뉴스 전문 분석 AI입니다. 아래 기사를 분석하여 반드시 유효한 JSON 형식으로만 응답하세요.
 
 [제목]: {article.title}
 [본문]: {article.content[:2000]}
 
-반드시 아래 JSON 형식으로만 응답하세요:
+출력 형식 예시:
 {{
-  "summary": "3줄 요약 내용",
-  "sentiment_score": 0.5 (범위 -1.0 ~ 1.0),
-  "sentiment_label": "긍정 / 중립 / 부정",
-  "key_topics": ["토픽1", "토픽2", "토픽3"],
-  "entities": ["엔티티1", "엔티티2"],
-  "related_stocks": ["관련 종목명 또는 종목코드"]
+  "summary": "1. 첫번째 요약 문장\\n2. 두번째 요약 문장\\n3. 세번째 요약 문장",
+  "sentiment_score": 0.5,
+  "sentiment_label": "긍정",
+  "key_topics": ["반도체", "AI", "수출"],
+  "entities": ["삼성전자", "SK하이닉스"],
+  "related_stocks": ["005930", "000660"]
 }}
 """
-    result = await llm_gateway.generate(
-        prompt=prompt,
-        task_type="realtime_api",
-        temperature=0.1
-    )
-
     try:
-        parsed = json.loads(result["response_text"].strip("` \n").replace("json\n", ""))
+        result = await llm_gateway.generate(
+            prompt=prompt,
+            task_type="realtime_api",
+            temperature=0.1
+        )
+        response_text = result.get("response_text", "").strip()
+
+        # 1. Direct JSON parse or Regex extract
+        json_match = re.search(r"\{.*\}", response_text, re.DOTALL)
+        if json_match:
+            parsed = json.loads(json_match.group(0))
+        else:
+            parsed = json.loads(response_text)
+
         return ArticleAnalysisResponse(
             article_id=article.id,
             title=article.title,
-            summary=parsed.get("summary", ""),
-            sentiment_score=parsed.get("sentiment_score", 0.0),
-            sentiment_label=parsed.get("sentiment_label", "중립"),
+            summary=parsed.get("summary") or response_text[:300],
+            sentiment_score=float(parsed.get("sentiment_score", 0.0)),
+            sentiment_label=str(parsed.get("sentiment_label", "중립")),
             key_topics=parsed.get("key_topics", []),
             entities=parsed.get("entities", []),
             related_stocks=parsed.get("related_stocks", [])
         )
-    except Exception:
+    except Exception as e:
+        # Fallback: 로컬 자연어 요약 추출 (LLM 일시 지연 시)
+        content_lines = [line.strip() for line in (article.content or "").split("\n") if len(line.strip()) > 15]
+        extractive_summary = "\n".join(content_lines[:3]) if content_lines else (article.summary or article.title)
+        
+        # 키워드 추출 (제목에서 2글자 이상 명사/단어)
+        words = [w for w in re.findall(r'[가-힣a-zA-Z0-9]{2,}', article.title) if w not in ["시사", "스페셜", "단독", "종합", "속보", "뉴스", "기자"]]
+
         return ArticleAnalysisResponse(
             article_id=article.id,
             title=article.title,
-            summary=result["response_text"][:200],
+            summary=extractive_summary,
             sentiment_score=0.0,
             sentiment_label="중립",
-            key_topics=[],
+            key_topics=words[:5],
             entities=[],
             related_stocks=[]
         )
