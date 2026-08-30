@@ -20,7 +20,8 @@ if [ ! -d "$SCRIPT_DIR/horus-web/node_modules" ]; then
 fi
 
 echo "🌐 [Horus Web] 프론트엔드 대시보드를 시작합니다..."
-echo "👉 접속 주소: http://localhost:3000"
+echo "👉 직접 접속: http://localhost:3005"
+echo "👉 프록시 접속: http://localhost:3000 (또는 https://heyes.live)"
 echo "💡 중단하려면 [Ctrl + C]를 누르세요. (즉시 종료됩니다)"
 echo "--------------------------------------------------------"
 

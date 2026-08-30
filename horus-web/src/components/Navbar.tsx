@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { 
@@ -7,11 +8,28 @@ import {
   Newspaper, 
   Share2, 
   TrendingUp, 
-  Bot
+  Bot,
+  Zap,
+  Lock
 } from "lucide-react";
+import { api, LLMModelsResponse } from "@/lib/api";
+import { logoutAuth } from "@/components/AuthGate";
 
 export function Navbar() {
   const pathname = usePathname();
+  const [llmStatus, setLlmStatus] = useState<LLMModelsResponse | null>(null);
+
+  useEffect(() => {
+    async function loadLlmStatus() {
+      try {
+        const res = await api.get("/llm/models");
+        setLlmStatus(res.data);
+      } catch (e) {
+        // silent fallback
+      }
+    }
+    loadLlmStatus();
+  }, []);
 
   const navItems = [
     { href: "/", label: "대시보드", icon: LayoutDashboard },
@@ -19,6 +37,9 @@ export function Navbar() {
     { href: "/graph3d", label: "3D 단어/토픽망", icon: Share2 },
     { href: "/quant", label: "종가매매 퀀트", icon: TrendingUp },
   ];
+
+  const hasGpu2 = llmStatus?.gpu2_available ?? true;
+  const hasOllama = llmStatus?.ollama_available ?? true;
 
   return (
     <nav className="border-b border-slate-800 bg-slate-900/95 sticky top-0 z-50">
@@ -55,14 +76,40 @@ export function Navbar() {
           </div>
 
           <div className="flex items-center gap-3">
-            <div className="flex items-center gap-1.5 text-xs text-amber-400 bg-amber-500/10 px-2.5 py-1 rounded-full border border-amber-500/20">
-              <span className="w-2 h-2 rounded-full bg-amber-400 shadow-[0_0_6px_rgba(251,191,36,0.8)]"></span>
-              Ollama gemma4:e4b
+            <div className="flex items-center gap-2 text-xs bg-slate-800/80 px-3 py-1 rounded-full border border-slate-700">
+              <Zap className="w-3.5 h-3.5 text-amber-400" />
+              <div className="flex items-center gap-1.5 font-medium">
+                <span className="text-slate-300">AI:</span>
+                {hasGpu2 ? (
+                  <span className="text-emerald-400 flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                    GPU2 Qwen3.8
+                  </span>
+                ) : hasOllama ? (
+                  <span className="text-sky-400 flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-sky-400"></span>
+                    Local Ollama
+                  </span>
+                ) : (
+                  <span className="text-slate-400">대기 중</span>
+                )}
+                {hasGpu2 && hasOllama && (
+                  <span className="text-[10px] text-slate-500 font-mono">+Ollama</span>
+                )}
+              </div>
             </div>
+
+            <button
+              onClick={() => logoutAuth()}
+              title="보안 잠금 (로그아웃)"
+              className="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-slate-800/80 rounded-lg border border-transparent hover:border-slate-700 transition flex items-center gap-1 text-xs cursor-pointer"
+            >
+              <Lock className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline text-[11px]">잠금</span>
+            </button>
           </div>
         </div>
       </div>
     </nav>
   );
 }
-

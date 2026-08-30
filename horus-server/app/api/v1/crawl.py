@@ -43,7 +43,7 @@ from app.schemas.crawl import (
     AnchorGroupMatchRequest, AnchorGroupMatchResponse,
     DaemonControlRequest, DaemonStatusResponse,
     LLMWorkerControlRequest, LLMWorkerStatusResponse,
-    GPUUnifiedStatusResponse, TextWorkerControlRequest, VisionWorkerControlRequest,
+    GPUUnifiedStatusResponse, TextWorkerControlRequest, VisionWorkerControlRequest, GPUConcurrencyRequest,
     CrawlEventItem, TimeSeriesMetricsResponse,
     CallTick, LaneSeries, MultiLaneStreamResponse, BucketEventBreakdown,
     SmartCollectorCreate, SmartCollectorUpdate,
@@ -301,19 +301,26 @@ async def get_crawler_daemon_status():
 
 
 # ==============================================================================
-# 🧠 2. 단일 직렬 GPU 작업 큐 & 텍스트/비전 듀얼 서브시스템 제어 API
+# 🧠 2. GPU2 Dual 5070 Ti 8-Way 병렬 GPU 작업 큐 & 듀얼 서브시스템 제어 API
 # ==============================================================================
 @router.get("/gpu/status", response_model=GPUUnifiedStatusResponse)
 async def get_gpu_worker_status():
-    """단일 직렬 GPU 큐 통합 상태 및 텍스트/비전 대기 큐 분리 조회"""
+    """GPU2 Dual 5070 Ti 병렬 GPU 큐 통합 상태 및 텍스트/비전 대기 큐 & 활성 슬롯 조회"""
+    return GPUUnifiedStatusResponse(**(await llm_worker.get_unified_status()))
+
+@router.post("/gpu/concurrency", response_model=GPUUnifiedStatusResponse)
+async def update_gpu_concurrency(payload: GPUConcurrencyRequest):
+    """GPU 워커 동시 처리 슬롯 수(Concurrency) 실시간 동적 변경 (1~32)"""
+    llm_worker.set_concurrency(payload.concurrency, subsystem=payload.subsystem or "all")
     return GPUUnifiedStatusResponse(**(await llm_worker.get_unified_status()))
 
 # 📝 텍스트 NLP 서브시스템 제어
 @router.post("/gpu/text/start", response_model=GPUUnifiedStatusResponse)
 async def start_text_worker(payload: Optional[TextWorkerControlRequest] = None):
-    """텍스트 NLP 서브시스템 시작 (요약, 감성 분석, 엔티티 추출)"""
-    model_name = payload.model_name if payload else "gemma4:e4b-mlx"
-    await llm_worker.start_text(model_name=model_name)
+    """텍스트 NLP 서브시스템 시작 (요약, 감성 분석, 엔티티 추출, 8-Way 병렬)"""
+    model_name = payload.model_name if (payload and payload.model_name) else "gpu2:cyankiwi/Qwen3.8-27B-AWQ-INT4"
+    concurrency = payload.concurrency if payload else 8
+    await llm_worker.start_text(model_name=model_name, concurrency=concurrency)
     return GPUUnifiedStatusResponse(**(await llm_worker.get_unified_status()))
 
 @router.post("/gpu/text/pause", response_model=GPUUnifiedStatusResponse)
@@ -337,9 +344,10 @@ async def stop_text_worker():
 # 🖼️ 비전 Image-to-Text 서브시스템 제어
 @router.post("/gpu/vision/start", response_model=GPUUnifiedStatusResponse)
 async def start_vision_worker(payload: Optional[VisionWorkerControlRequest] = None):
-    """비전 Image-to-Text 서브시스템 시작 (이미지 텍스트 변환, 본문 주입, 임시파일 삭제)"""
-    model_name = payload.model_name if payload else "qwen3.5:2b-mlx"
-    await llm_worker.start_vision(model_name=model_name)
+    """비전 Image-to-Text 서브시스템 시작 (이미지 텍스트 변환, 본문 주입, 8-Way 병렬)"""
+    model_name = payload.model_name if (payload and payload.model_name) else "gpu2:cyankiwi/Qwen3.8-27B-AWQ-INT4"
+    concurrency = payload.concurrency if payload else 4
+    await llm_worker.start_vision(model_name=model_name, concurrency=concurrency)
     return GPUUnifiedStatusResponse(**(await llm_worker.get_unified_status()))
 
 @router.post("/gpu/vision/pause", response_model=GPUUnifiedStatusResponse)
@@ -363,8 +371,9 @@ async def stop_vision_worker():
 # 하위 호환성 레거시 라우트
 @router.post("/nlp/worker/start", response_model=LLMWorkerStatusResponse)
 async def start_llm_worker(payload: Optional[LLMWorkerControlRequest] = None):
-    model_name = payload.model_name if payload else "gemma4:e4b-mlx"
-    await llm_worker.start_text(model_name=model_name)
+    model_name = payload.model_name if payload else "gpu2:cyankiwi/Qwen3.8-27B-AWQ-INT4"
+    batch_size = payload.batch_size if payload else 8
+    await llm_worker.start_text(model_name=model_name, concurrency=batch_size)
     return LLMWorkerStatusResponse(**(await llm_worker.get_status()))
 
 @router.post("/nlp/worker/pause", response_model=LLMWorkerStatusResponse)
@@ -1523,48 +1532,58 @@ async def update_source_wrapper(
         "message": f"'{source.name}'의 AI 래퍼 추출 규칙이 성공적으로 저장되었습니다."
     }
 
+@router.get("/gpu/models")
 @router.get("/ollama/models")
-async def get_installed_ollama_models():
+async def get_installed_gpu_and_ollama_models():
     """
-    Local Ollama 인스턴스에 설치된 전체 모델 목록을 실시간으로 반환합니다.
+    GPU2 vLLM 서버 및 Local Ollama 인스턴스에 설치된 실제 모델 목록을 실시간으로 반환합니다.
+    (Dual RTX 5070 Ti 전용 GPU2 모델을 최우선 추천)
     """
     import httpx
     from crawler.config import config
+    
+    gpu2_models = []
+    gpu2_url = getattr(config, "GPU2_BASE_URL", "http://gpu2:8000/v1")
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            res = await client.get(f"{gpu2_url.rstrip('/')}/models")
+            if res.status_code == 200:
+                data = res.json().get("data", [])
+                gpu2_models = [f"gpu2:{m.get('id')}" for m in data if m.get("id")]
+    except Exception as e:
+        logger.debug(f"Failed to query GPU2 models: {e}")
+
+    if not gpu2_models:
+        gpu2_models = [
+            "gpu2:cyankiwi/Qwen3.8-27B-AWQ-INT4"
+        ]
+
+    ollama_models = []
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
             res = await client.get(f"{config.OLLAMA_BASE_URL}/api/tags")
             if res.status_code == 200:
                 models_data = res.json().get("models", [])
-                models_list = [m.get("name") for m in models_data if m.get("name")]
-                if models_list:
-                    # 기본 권장 모델 선정
-                    default_model = "gemma4:12b-mlx" if "gemma4:12b-mlx" in models_list else (
-                        "gemma4:12b" if "gemma4:12b" in models_list else models_list[0]
-                    )
-                    return {
-                        "models": models_list,
-                        "default": default_model
-                    }
+                ollama_models = [m.get("name") for m in models_data if m.get("name")]
     except Exception as e:
-        logger.warning(f"Failed to query Ollama models from /api/tags: {e}")
+        logger.debug(f"Failed to query Ollama models: {e}")
 
-    # Fallback 모델 프리셋 목록
-    fallback_models = [
-        "gemma4:12b-mlx",
-        "gemma4:e4b-mlx",
-        "gemma4:12b",
-        "gemma4:4b",
-        "qwen2.5:27b",
-        "qwen2.5:14b",
-        "qwen2.5:7b",
-        "llama3.3:70b",
-        "llama3.2:3b",
-        "llama3.1:8b",
-        "mistral:latest"
-    ]
+    if not ollama_models:
+        ollama_models = [
+            "gemma4:e4b-mlx",
+            "gemma4:12b-mlx",
+            "qwen2.5:27b",
+            "llama3.3:70b"
+        ]
+
+    combined_models = gpu2_models + [m for m in ollama_models if m not in gpu2_models]
+    default_model = gpu2_models[0] if gpu2_models else "gpu2:cyankiwi/Qwen3.8-27B-AWQ-INT4"
+
     return {
-        "models": fallback_models,
-        "default": "gemma4:12b-mlx"
+        "models": combined_models,
+        "default": default_model,
+        "gpu2_models": gpu2_models,
+        "ollama_models": ollama_models
     }
 
 

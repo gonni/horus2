@@ -286,22 +286,36 @@ class DaemonStatusResponse(BaseModel):
     next_run_at: Optional[str] = None
     last_error_message: Optional[str] = None
 
-# 🧠 GPU 단일 직렬 큐 & 텍스트/비전 듀얼 워커 스키마
+# 🧠 GPU2 Dual 5070 Ti 8-Way 병렬 큐 & 텍스트/비전 듀얼 워커 스키마
 class TextWorkerControlRequest(BaseModel):
-    model_name: Optional[str] = Field(default="gemma4:e4b-mlx", description="Ollama 텍스트 모델명")
+    model_name: Optional[str] = Field(default="gpu2:cyankiwi/Qwen3.8-27B-AWQ-INT4", description="LLM 텍스트 모델명 (GPU2 또는 Ollama)")
+    concurrency: Optional[int] = Field(default=8, ge=1, le=32, description="텍스트 NLP 동시 처리 슬롯 수")
 
 class VisionWorkerControlRequest(BaseModel):
-    model_name: Optional[str] = Field(default="qwen3.5:2b-mlx", description="Ollama 비전 모델명")
+    model_name: Optional[str] = Field(default="gpu2:cyankiwi/Qwen3.8-27B-AWQ-INT4", description="LLM 비전 모델명")
+    concurrency: Optional[int] = Field(default=4, ge=1, le=32, description="비전 이미지 동시 처리 슬롯 수")
+
+class GPUConcurrencyRequest(BaseModel):
+    concurrency: int = Field(default=8, ge=1, le=32, description="변경할 동시 처리 슬롯 수 (1~32)")
+    subsystem: Optional[str] = Field(default="all", description="적용 대상 서브시스템: all, text, vision")
 
 class GPUUnifiedStatusResponse(BaseModel):
+    # 병렬 동시성 파라미터
+    concurrency: int = Field(default=8, description="전체 동시 처리 슬롯 수")
+    text_concurrency: int = Field(default=8, description="텍스트 NLP 동시 처리 슬롯 수")
+    vision_concurrency: int = Field(default=4, description="비전 Image-to-Text 동시 처리 슬롯 수")
+    gpu_device: str = Field(default="Dual RTX 5070 Ti (8-Way 병렬 가속)", description="가속 디바이스 정보")
+    provider: str = Field(default="gpu2", description="현재 사용 중인 AI 공급자 (gpu2, ollama, hybrid)")
+    active_slots: List[Dict[str, Any]] = Field(default_factory=list, description="현재 가동 중인 병렬 슬롯별 상태 목록")
+
     text_state: str = Field(default="IDLE", description="IDLE, RUNNING, PAUSED, STOPPED")
-    text_model_name: str = "gemma4:e4b-mlx"
+    text_model_name: str = "gpu2:cyankiwi/Qwen3.8-27B-AWQ-INT4"
     text_pending_count: int = 0
     text_processed_count: int = 0
     text_failed_count: int = 0
 
     vision_state: str = Field(default="IDLE", description="IDLE, RUNNING, PAUSED, STOPPED")
-    vision_model_name: str = "qwen3.5:2b-mlx"
+    vision_model_name: str = "gpu2:cyankiwi/Qwen3.8-27B-AWQ-INT4"
     vision_pending_count: int = 0
     vision_processed_count: int = 0
     vision_failed_count: int = 0
@@ -312,15 +326,15 @@ class GPUUnifiedStatusResponse(BaseModel):
     last_error_message: Optional[str] = None
 
 class LLMWorkerControlRequest(BaseModel):
-    model_name: Optional[str] = Field(default="gemma4:e4b-mlx", description="Ollama 모델명")
-    batch_size: Optional[int] = Field(default=2, ge=1, le=10)
-    interval_seconds: Optional[float] = Field(default=3.0, ge=0.5, le=60.0)
+    model_name: Optional[str] = Field(default="gpu2:cyankiwi/Qwen3.8-27B-AWQ-INT4", description="LLM 모델명")
+    batch_size: Optional[int] = Field(default=8, ge=1, le=32)
+    interval_seconds: Optional[float] = Field(default=0.5, ge=0.1, le=60.0)
 
 class LLMWorkerStatusResponse(BaseModel):
     state: str = Field(description="IDLE, RUNNING, PAUSED, STOPPED")
-    model_name: str = "gemma4:e4b-mlx"
-    batch_size: int = 2
-    interval_seconds: float = 3.0
+    model_name: str = "gpu2:cyankiwi/Qwen3.8-27B-AWQ-INT4"
+    batch_size: int = 8
+    interval_seconds: float = 0.5
     processed_count: int = 0
     failed_count: int = 0
     pending_count: int = 0

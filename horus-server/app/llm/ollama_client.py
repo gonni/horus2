@@ -14,14 +14,14 @@ class OllamaClient:
 
     async def is_available(self) -> bool:
         try:
-            res = await self.client.get("/api/tags")
+            res = await self.client.get("/api/tags", timeout=2.0)
             return res.status_code == 200
         except Exception:
             return False
 
     async def get_installed_models(self) -> List[str]:
         try:
-            res = await self.client.get("/api/tags")
+            res = await self.client.get("/api/tags", timeout=2.5)
             if res.status_code == 200:
                 data = res.json()
                 return [m.get("name") for m in data.get("models", []) if m.get("name")]
@@ -31,6 +31,9 @@ class OllamaClient:
 
     async def resolve_model(self, requested_model: Optional[str] = None) -> str:
         target = requested_model or self.default_model
+        if target.startswith("ollama:"):
+            target = target[7:]
+
         installed = await self.get_installed_models()
         if not installed:
             return target

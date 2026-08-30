@@ -19,10 +19,21 @@ class CrawlerSettings(BaseSettings):
     REDIS_PORT: int = 6379
     REDIS_PASSWORD: Optional[str] = "horus_redis"
 
-    # LLM Settings for AI Parsing
+    # LLM Settings for AI Parsing (GPU2 Dual 5070 Ti)
+    DEFAULT_LLM_PROVIDER: str = "gpu2"  # "gpu2", "ollama", "gemini"
+    ENABLE_OLLAMA_FALLBACK: bool = False
+
+    GPU2_BASE_URL: str = "http://gpu2:8000/v1"
+    GPU2_MODEL: str = "cyankiwi/Qwen3.8-27B-AWQ-INT4"
+    GPU2_MAX_RETRIES: int = 3
+    GPU2_RETRY_BACKOFF: float = 1.5
+    DEFAULT_CONCURRENCY: int = 8
+    MAX_TEXT_CONCURRENCY: int = 8
+    MAX_VISION_CONCURRENCY: int = 4
+
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     OLLAMA_URL: Optional[str] = "http://localhost:11434"
-    OLLAMA_MODEL: str = "gemma4:e4b-mlx"
+    OLLAMA_MODEL: str = "qwen3.5:35b-mlx"
     GEMINI_API_KEY: Optional[str] = None
     GEMINI_MODEL: str = "gemini-2.0-flash"
 

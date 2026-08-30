@@ -135,7 +135,7 @@ export default function CrawlAdminDashboard() {
   const [isWrapperModalOpen, setIsWrapperModalOpen] = useState(false);
   const [selectedSourceForWrapper, setSelectedSourceForWrapper] = useState<CrawlSource | null>(null);
   const [wrapperMode, setWrapperMode] = useState<"anchor" | "auto" | "manual">("anchor");
-  const [wrapperModelName, setWrapperModelName] = useState("gemma4:e4b-mlx");
+  const [wrapperModelName, setWrapperModelName] = useState("gpu2:cyankiwi/Qwen3.8-27B-AWQ-INT4");
   const [customModelInput, setCustomModelInput] = useState(false);
   const [synthesizingWrapper, setSynthesizingWrapper] = useState(false);
   const [wrapperResult, setWrapperResult] = useState<WrapperSynthesisResponse | null>(null);
@@ -149,7 +149,7 @@ export default function CrawlAdminDashboard() {
     views_selector: "",
     category_selector: "",
     image_selector: "",
-    llm_model: "gemma4:e4b-mlx",
+    llm_model: "gpu2:cyankiwi/Qwen3.8-27B-AWQ-INT4",
   });
   const [testingRules, setTestingRules] = useState(false);
   const [savingWrapper, setSavingWrapper] = useState(false);
@@ -161,14 +161,18 @@ export default function CrawlAdminDashboard() {
   const [daemonIntervalInput, setDaemonIntervalInput] = useState<number>(60);
   const [controllingDaemon, setControllingDaemon] = useState(false);
 
-  // 🧠 단일 직렬 GPU 작업 큐 & 텍스트/비전 듀얼 서브시스템 상태
+  // 🧠 GPU2 Dual 5070 Ti 8-Way 병렬 GPU 작업 큐 & 텍스트/비전 듀얼 서브시스템 상태
   const [gpuStatus, setGpuStatus] = useState<GPUUnifiedStatusResponse | null>(null);
-  const [textModelName, setTextModelName] = useState<string>("gemma4:e4b-mlx");
-  const [visionModelName, setVisionModelName] = useState<string>("qwen3.5:2b-mlx");
+  const [textModelName, setTextModelName] = useState<string>("gpu2:cyankiwi/Qwen3.8-27B-AWQ-INT4");
+  const [visionModelName, setVisionModelName] = useState<string>("gpu2:cyankiwi/Qwen3.8-27B-AWQ-INT4");
+  const [textConcurrency, setTextConcurrency] = useState<number>(8);
+  const [visionConcurrency, setVisionConcurrency] = useState<number>(4);
+  const [changingConcurrency, setChangingConcurrency] = useState(false);
+  const [concurrencyFeedback, setConcurrencyFeedback] = useState<string | null>(null);
   const [controllingText, setControllingText] = useState(false);
   const [controllingVision, setControllingVision] = useState(false);
   const [llmWorkerStatus, setLlmWorkerStatus] = useState<LLMWorkerStatusResponse | null>(null);
-  const [selectedWorkerModel, setSelectedWorkerModel] = useState<string>("gemma4:e4b-mlx");
+  const [selectedWorkerModel, setSelectedWorkerModel] = useState<string>("gpu2:cyankiwi/Qwen3.8-27B-AWQ-INT4");
   const [controllingWorker, setControllingWorker] = useState(false);
 
   // 📊 시계열 분석 차트 & 실시간 라이브 이벤트 스트림 상태
@@ -207,9 +211,9 @@ export default function CrawlAdminDashboard() {
   const [inspectingDom, setInspectingDom] = useState(false);
   const [domSearchQuery, setDomSearchQuery] = useState("");
   const [installedModels, setInstalledModels] = useState<string[]>([
+    "gpu2:cyankiwi/Qwen3.8-27B-AWQ-INT4",
     "gemma4:e4b-mlx",
     "gemma4:12b-mlx",
-    "gemma4:12b",
     "qwen2.5:27b",
     "llama3.3:70b"
   ]);
@@ -320,24 +324,48 @@ export default function CrawlAdminDashboard() {
     }
   };
 
-  // 5. 단일 직렬 GPU 작업 큐 & 텍스트/비전 듀얼 서브시스템 상태 로드 & 제어
+  // 5. GPU2 Dual 5070 Ti 8-Way 병렬 GPU 작업 큐 & 텍스트/비전 듀얼 서브시스템 상태 로드 & 제어
   const fetchGPUStatus = async () => {
     try {
       const res = await api.get("/crawl/gpu/status");
       setGpuStatus(res.data);
       if (res.data.text_model_name) setTextModelName(res.data.text_model_name);
       if (res.data.vision_model_name) setVisionModelName(res.data.vision_model_name);
+      if (res.data.text_concurrency) setTextConcurrency(res.data.text_concurrency);
+      if (res.data.vision_concurrency) setVisionConcurrency(res.data.vision_concurrency);
     } catch (e) {
       console.error("Failed to fetch GPU status:", e);
     }
   };
 
+  // ⚡ 동시 처리 수(Concurrency) 실시간 변경
+  const handleSetConcurrency = async (val: number, subsystem: string = "all") => {
+    setChangingConcurrency(true);
+    try {
+      const res = await api.post("/crawl/gpu/concurrency", {
+        concurrency: val,
+        subsystem: subsystem,
+      });
+      setGpuStatus(res.data);
+      if (subsystem === "text" || subsystem === "all") setTextConcurrency(res.data.text_concurrency || val);
+      if (subsystem === "vision" || subsystem === "all") setVisionConcurrency(res.data.vision_concurrency || val);
+      setConcurrencyFeedback(`⚡ 동시 처리수가 ${val} 슬롯(8-Way Dual 5070Ti)으로 즉시 적용되었습니다.`);
+      setTimeout(() => setConcurrencyFeedback(null), 3000);
+    } catch (e: any) {
+      console.error("Set concurrency failed:", e);
+      alert(formatErrorMessage(e, "동시성 변경 실패"));
+    } finally {
+      setChangingConcurrency(false);
+    }
+  };
+
   // 📝 텍스트 NLP 제어
-  const handleStartTextWorker = async (model?: string) => {
+  const handleStartTextWorker = async (model?: string, conc?: number) => {
     setControllingText(true);
     try {
       const res = await api.post("/crawl/gpu/text/start", {
         model_name: model || textModelName,
+        concurrency: conc || textConcurrency,
       });
       setGpuStatus(res.data);
     } catch (e: any) {
@@ -385,11 +413,12 @@ export default function CrawlAdminDashboard() {
   };
 
   // 🖼️ 비전 Image-to-Text 제어
-  const handleStartVisionWorker = async (model?: string) => {
+  const handleStartVisionWorker = async (model?: string, conc?: number) => {
     setControllingVision(true);
     try {
       const res = await api.post("/crawl/gpu/vision/start", {
         model_name: model || visionModelName,
+        concurrency: conc || visionConcurrency,
       });
       setGpuStatus(res.data);
     } catch (e: any) {
@@ -643,16 +672,16 @@ export default function CrawlAdminDashboard() {
     setTimeout(() => setCopiedContent(false), 2000);
   };
 
-  // Local Ollama 설치 모델 목록 실시간 조회
+  // GPU2 & Ollama 설치 모델 목록 실시간 조회
   const fetchInstalledModels = async () => {
     try {
-      const res = await api.get("/crawl/ollama/models");
+      const res = await api.get("/crawl/gpu/models");
       if (res.data?.models && res.data.models.length > 0) {
         setInstalledModels(res.data.models);
         return res.data.models;
       }
     } catch (e) {
-      console.warn("Failed to fetch installed Ollama models:", e);
+      console.warn("Failed to fetch installed GPU models:", e);
     }
     return installedModels;
   };
@@ -664,9 +693,11 @@ export default function CrawlAdminDashboard() {
     const hints = src.ai_parsing_hints || {};
     let model = hints.llm_model;
     if (!model) {
-      if (models.includes("gemma4:12b-mlx")) model = "gemma4:12b-mlx";
+      const gpu2Model = models.find((m: string) => m.includes("gpu2:"));
+      if (gpu2Model) model = gpu2Model;
+      else if (models.includes("gemma4:12b-mlx")) model = "gemma4:12b-mlx";
       else if (models.includes("gemma4:12b")) model = "gemma4:12b";
-      else model = models[0] || "gemma4:12b-mlx";
+      else model = models[0] || "gpu2:cyankiwi/Qwen3.8-27B-AWQ-INT4";
     }
     setWrapperModelName(model);
     setCustomModelInput(!models.includes(model));
@@ -1406,39 +1437,107 @@ export default function CrawlAdminDashboard() {
               </div>
             </div>
 
-            {/* 2단 (하단): 🧠 단일 직렬 GPU 작업 큐 & 듀얼 서브시스템 (텍스트 NLP & 비전 Image-to-Text) 제어 허브 */}
-            <div className="bg-slate-900 border border-purple-500/30 rounded-xl p-4 md:p-5 relative overflow-hidden shadow-lg space-y-4">
-              {/* 상단 통합 헤더 & 직렬 큐 상태 */}
-              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-3">
+            {/* 2단 (하단): 🚀 GPU2 Dual RTX 5070 Ti 8-Way 고속 병렬 작업 큐 & 듀얼 서브시스템 제어 허브 */}
+            <div className="bg-slate-900 border border-purple-500/40 rounded-xl p-4 md:p-5 relative overflow-hidden shadow-xl space-y-4">
+              {/* 상단 통합 헤더 & GPU2 서버 / 병렬 처리 상태 */}
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-3.5">
                 <div className="flex items-center gap-2.5">
-                  <div className="p-2.5 bg-purple-500/10 border border-purple-500/20 rounded-lg text-purple-400">
+                  <div className="p-2.5 bg-gradient-to-br from-purple-600/20 to-indigo-600/20 border border-purple-500/30 rounded-lg text-purple-300 shadow-[0_0_12px_rgba(168,85,247,0.25)]">
                     <Cpu className="w-5 h-5" />
                   </div>
                   <div>
                     <h2 className="text-base font-bold text-white flex items-center gap-2">
-                      GPU 단일 직렬 작업 큐 워커
-                      <span className="px-2 py-0.5 text-[10px] bg-purple-500/20 text-purple-300 border border-purple-500/30 rounded-full font-bold flex items-center gap-1.5">
-                        <span className="w-2 h-2 rounded-full bg-purple-400 shadow-[0_0_5px_rgba(192,132,252,0.8)]" />
-                        단일 GPU 순차 실행 (Ollama 충돌 방지)
+                      GPU2 고속 병렬 작업 큐 워커
+                      <span className="px-2.5 py-0.5 text-[10px] bg-purple-500/20 text-purple-300 border border-purple-500/40 rounded-full font-bold flex items-center gap-1.5 shadow-[0_0_8px_rgba(168,85,247,0.3)]">
+                        <span className="w-2 h-2 rounded-full bg-purple-400 animate-pulse" />
+                        Dual RTX 5070 Ti (8-Way 병렬 가속)
+                      </span>
+                      <span className="px-2 py-0.5 text-[10px] bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 rounded-full font-mono font-medium">
+                        🟢 GPU2 vLLM (:8000/v1)
                       </span>
                     </h2>
                     <p className="text-xs text-slate-400 mt-0.5">
-                      텍스트 NLP와 비전 이미지 처리를 분리 제어하며, GPU에서는 1건씩 안전하게 Serial FIFO로 처리합니다.
+                      텍스트 NLP와 비전 처리를 분리 제어하며, 5070 Ti Dual GPU 기반 최대 8개 동시 병렬(8-Way Parallel) 슬롯으로 초고속 처리합니다.
                     </p>
                   </div>
                 </div>
 
-                {/* 현재 실행 중인 작업 표시 */}
-                <div className="px-3 py-1.5 bg-slate-950 border border-slate-800 rounded-lg text-xs flex items-center gap-2">
-                  <span className="text-slate-500">현재 GPU 처리:</span>
-                  {gpuStatus?.current_task ? (
-                    <span className="text-purple-300 font-semibold flex items-center gap-1.5">
-                      <span className="w-2 h-2 rounded-full bg-purple-400 shadow-[0_0_6px_rgba(192,132,252,0.9)]" />
-                      [{gpuStatus.current_task.type === "vision" ? "🖼️ 비전" : "📝 텍스트"}] {gpuStatus.current_task.title}
+                {/* 현재 활성 슬롯 요약 배지 */}
+                <div className="flex items-center gap-2">
+                  <div className="px-3 py-1.5 bg-slate-950/90 border border-purple-500/30 rounded-lg text-xs flex items-center gap-2 shadow-inner">
+                    <span className="text-slate-400">병렬 처리 가동 현황:</span>
+                    {gpuStatus?.active_slots && gpuStatus.active_slots.length > 0 ? (
+                      <span className="text-purple-300 font-bold font-mono flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+                        <span className="text-emerald-400">{gpuStatus.active_slots.length}</span> / {gpuStatus.concurrency || textConcurrency} 슬롯 활성
+                      </span>
+                    ) : (
+                      <span className="text-slate-400 font-mono flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full bg-slate-500" />
+                        대기 중 (IDLE)
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* ⚡ 동시 처리 수 (Concurrency) 실시간 조절 메뉴 바 */}
+              <div className="bg-slate-950/80 border border-slate-800/90 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-slate-200">
+                    <Zap className="w-4 h-4 text-amber-400 animate-pulse" />
+                    <span>동시 처리 수 (Concurrency):</span>
+                  </div>
+                  {/* 빠른 프리셋 버튼 */}
+                  <div className="flex items-center gap-1.5 bg-slate-900 p-1 rounded-lg border border-slate-800">
+                    {[1, 2, 4, 8, 12, 16].map((num) => {
+                      const isCurrent = (gpuStatus?.concurrency || textConcurrency) === num;
+                      return (
+                        <button
+                          key={num}
+                          onClick={() => handleSetConcurrency(num)}
+                          disabled={changingConcurrency}
+                          className={`px-2.5 py-1 rounded-md text-xs font-bold font-mono transition flex items-center gap-1 ${
+                            isCurrent
+                              ? "bg-purple-600 text-white shadow-[0_0_8px_rgba(168,85,247,0.5)] border border-purple-400"
+                              : "text-slate-400 hover:text-white hover:bg-slate-800"
+                          }`}
+                        >
+                          {num}
+                          {num === 8 && <span className="text-[9px] text-purple-200 font-normal">(5070Ti)</span>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* 동시성 스텝퍼 & 피드백 */}
+                <div className="flex items-center gap-3">
+                  {concurrencyFeedback && (
+                    <span className="text-xs text-emerald-400 font-medium animate-fade-in bg-emerald-500/10 px-2.5 py-1 rounded-md border border-emerald-500/20">
+                      {concurrencyFeedback}
                     </span>
-                  ) : (
-                    <span className="text-slate-400 font-mono">대기 중 (IDLE)</span>
                   )}
+                  <div className="flex items-center gap-1.5 bg-slate-900 px-2 py-1 rounded-lg border border-slate-800">
+                    <span className="text-[11px] text-slate-400">직접 조절:</span>
+                    <button
+                      onClick={() => handleSetConcurrency(Math.max(1, (gpuStatus?.concurrency || textConcurrency) - 1))}
+                      disabled={changingConcurrency || (gpuStatus?.concurrency || textConcurrency) <= 1}
+                      className="w-6 h-6 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded flex items-center justify-center font-bold text-xs disabled:opacity-30"
+                    >
+                      -
+                    </button>
+                    <span className="w-7 text-center font-mono font-bold text-purple-300 text-xs">
+                      {gpuStatus?.concurrency || textConcurrency}
+                    </span>
+                    <button
+                      onClick={() => handleSetConcurrency(Math.min(32, (gpuStatus?.concurrency || textConcurrency) + 1))}
+                      disabled={changingConcurrency || (gpuStatus?.concurrency || textConcurrency) >= 32}
+                      className="w-6 h-6 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded flex items-center justify-center font-bold text-xs disabled:opacity-30"
+                    >
+                      +
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -1451,21 +1550,26 @@ export default function CrawlAdminDashboard() {
                       <FileText className="w-4 h-4 text-purple-400" />
                       1. 텍스트 NLP 정제 (요약/감성/엔티티)
                     </div>
-                    {gpuStatus?.text_state === "RUNNING" && (
-                      <span className="px-1.5 py-0.5 text-[10px] bg-purple-500/20 text-purple-300 border border-purple-500/30 rounded font-semibold">
-                        🟢 NLP 가동
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[10px] text-slate-400 font-mono bg-purple-500/10 px-2 py-0.5 rounded border border-purple-500/20 text-purple-300">
+                        {textConcurrency} 슬롯 동시처리
                       </span>
-                    )}
-                    {gpuStatus?.text_state === "PAUSED" && (
-                      <span className="px-1.5 py-0.5 text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded font-semibold">
-                        🟡 일시중지
-                      </span>
-                    )}
-                    {(!gpuStatus || gpuStatus.text_state === "IDLE" || gpuStatus.text_state === "STOPPED") && (
-                      <span className="px-1.5 py-0.5 text-[10px] bg-slate-800 text-slate-400 rounded">
-                        ⚪ 정지
-                      </span>
-                    )}
+                      {gpuStatus?.text_state === "RUNNING" && (
+                        <span className="px-1.5 py-0.5 text-[10px] bg-purple-500/20 text-purple-300 border border-purple-500/30 rounded font-semibold">
+                          🟢 NLP 가동
+                        </span>
+                      )}
+                      {gpuStatus?.text_state === "PAUSED" && (
+                        <span className="px-1.5 py-0.5 text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded font-semibold">
+                          🟡 일시중지
+                        </span>
+                      )}
+                      {(!gpuStatus || gpuStatus.text_state === "IDLE" || gpuStatus.text_state === "STOPPED") && (
+                        <span className="px-1.5 py-0.5 text-[10px] bg-slate-800 text-slate-400 rounded">
+                          ⚪ 정지
+                        </span>
+                      )}
+                    </div>
                   </div>
 
                   {/* 텍스트 큐 수치 */}
@@ -1492,11 +1596,11 @@ export default function CrawlAdminDashboard() {
                         setTextModelName(e.target.value);
                         if (gpuStatus?.text_state === "RUNNING") handleStartTextWorker(e.target.value);
                       }}
-                      className="bg-slate-900 border border-slate-700 text-purple-300 rounded px-2 py-1 text-[11px] focus:outline-none"
+                      className="bg-slate-900 border border-slate-700 text-purple-300 rounded px-2 py-1 text-[11px] focus:outline-none max-w-[210px] truncate"
                     >
                       {installedModels.map((m) => (
                         <option key={m} value={m}>
-                          {m} {m.includes("e4b") ? "(추천)" : ""}
+                          {m} {m.includes("gpu2") ? "🔥 (5070Ti)" : m.includes("e4b") ? "(추천)" : ""}
                         </option>
                       ))}
                     </select>
@@ -1541,21 +1645,26 @@ export default function CrawlAdminDashboard() {
                       <Eye className="w-4 h-4 text-cyan-400" />
                       2. 비전 Image-to-Text (본문 주입)
                     </div>
-                    {gpuStatus?.vision_state === "RUNNING" && (
-                      <span className="px-1.5 py-0.5 text-[10px] bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 rounded font-semibold">
-                        🟢 비전 가동
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[10px] text-slate-400 font-mono bg-cyan-500/10 px-2 py-0.5 rounded border border-cyan-500/20 text-cyan-300">
+                        {visionConcurrency} 슬롯 동시처리
                       </span>
-                    )}
-                    {gpuStatus?.vision_state === "PAUSED" && (
-                      <span className="px-1.5 py-0.5 text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded font-semibold">
-                        🟡 일시중지
-                      </span>
-                    )}
-                    {(!gpuStatus || gpuStatus.vision_state === "IDLE" || gpuStatus.vision_state === "STOPPED") && (
-                      <span className="px-1.5 py-0.5 text-[10px] bg-slate-800 text-slate-400 rounded">
-                        ⚪ 정지
-                      </span>
-                    )}
+                      {gpuStatus?.vision_state === "RUNNING" && (
+                        <span className="px-1.5 py-0.5 text-[10px] bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 rounded font-semibold">
+                          🟢 비전 가동
+                        </span>
+                      )}
+                      {gpuStatus?.vision_state === "PAUSED" && (
+                        <span className="px-1.5 py-0.5 text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded font-semibold">
+                          🟡 일시중지
+                        </span>
+                      )}
+                      {(!gpuStatus || gpuStatus.vision_state === "IDLE" || gpuStatus.vision_state === "STOPPED") && (
+                        <span className="px-1.5 py-0.5 text-[10px] bg-slate-800 text-slate-400 rounded">
+                          ⚪ 정지
+                        </span>
+                      )}
+                    </div>
                   </div>
 
                   {/* 비전 큐 수치 */}
@@ -1582,11 +1691,11 @@ export default function CrawlAdminDashboard() {
                         setVisionModelName(e.target.value);
                         if (gpuStatus?.vision_state === "RUNNING") handleStartVisionWorker(e.target.value);
                       }}
-                      className="bg-slate-900 border border-slate-700 text-cyan-300 rounded px-2 py-1 text-[11px] focus:outline-none"
+                      className="bg-slate-900 border border-slate-700 text-cyan-300 rounded px-2 py-1 text-[11px] focus:outline-none max-w-[210px] truncate"
                     >
                       {installedModels.map((m) => (
                         <option key={m} value={m}>
-                          {m} {m.includes("2b") || m.includes("4b") ? "(경량 비전)" : ""}
+                          {m} {m.includes("gpu2") ? "🔥 (5070Ti)" : m.includes("2b") || m.includes("4b") ? "(경량)" : ""}
                         </option>
                       ))}
                     </select>
@@ -1625,11 +1734,71 @@ export default function CrawlAdminDashboard() {
                 </div>
               </div>
 
+              {/* 🎯 8-Way 병렬 가동 슬롯 매트릭스 (Parallel Slot Live Grid) */}
+              <div className="bg-slate-950/90 border border-slate-800 rounded-xl p-3 space-y-2">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-bold text-slate-300 flex items-center gap-1.5">
+                    <Layers className="w-3.5 h-3.5 text-purple-400" />
+                    5070 Ti Dual 병렬 처리 슬롯 실시간 가동 매트릭스 (총 {gpuStatus?.concurrency || textConcurrency}개 슬롯)
+                  </span>
+                  <span className="text-[11px] text-slate-500 font-mono">
+                    처리 공급자: <strong className="text-purple-300">{gpuStatus?.provider?.toUpperCase() || "GPU2"}</strong>
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2 pt-1">
+                  {Array.from({ length: Math.min(16, gpuStatus?.concurrency || textConcurrency) }).map((_, idx) => {
+                    const slotNum = idx + 1;
+                    const activeSlot = gpuStatus?.active_slots?.find((s) => s.slot_id === slotNum);
+                    const isRunning = Boolean(activeSlot);
+                    const isVision = activeSlot?.type === "vision";
+
+                    return (
+                      <div
+                        key={slotNum}
+                        className={`p-2 rounded-lg border text-xs transition-all ${
+                          isRunning
+                            ? isVision
+                              ? "bg-cyan-950/40 border-cyan-500/50 text-cyan-200 shadow-[0_0_8px_rgba(6,182,212,0.2)]"
+                              : "bg-purple-950/40 border-purple-500/50 text-purple-200 shadow-[0_0_8px_rgba(168,85,247,0.2)]"
+                            : "bg-slate-900/50 border-slate-800/80 text-slate-500"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="font-mono text-[10px] font-bold">
+                            Slot #{slotNum}
+                          </span>
+                          {isRunning ? (
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                          ) : (
+                            <span className="w-1.5 h-1.5 rounded-full bg-slate-700" />
+                          )}
+                        </div>
+                        {isRunning ? (
+                          <div className="space-y-0.5">
+                            <div className="text-[10px] font-semibold truncate" title={activeSlot?.title}>
+                              {isVision ? "🖼️ 비전" : "📝 NLP"} {activeSlot?.title}
+                            </div>
+                            <div className="text-[9px] text-slate-400 font-mono">
+                              연산 중...
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="text-[10px] text-slate-600 font-mono">
+                            대기 (IDLE)
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
               {/* 하단 안내 배지 */}
               <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-400 bg-slate-950/40 p-2 rounded-lg border border-slate-800">
                 <span className="flex items-center gap-1">
                   <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-                  이미지 파일은 메모리에서 텍스트 변환 후 즉시 삭제(용량 0MB 부담)되며, 원본 절대 URL은 메타데이터에 보존됩니다.
+                  GPU2 Dual 5070 Ti 8-Way 병렬 가속 연동 완료: 이미지/텍스트 비동기 분기 및 실시간 자동 폴백 보장.
                 </span>
                 <span className="font-mono text-slate-400">
                   전체 DB 기사: <strong className="text-white">{gpuStatus?.total_articles || 0}</strong>건

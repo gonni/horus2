@@ -40,7 +40,7 @@ export default function DashboardPage() {
           통합 인텔리전스 대시보드
         </h1>
         <p className="text-sm text-slate-400 mt-1">
-          실시간 AI 웹 크롤링, Ollama gemma4:e4b 자연어 분석, Neo4j 지식 그래프 및 종가매매 퀀트 현황
+          실시간 AI 웹 크롤링, Hybrid LLM (GPU2 Qwen3.8 + Ollama) 자연어 분석, Neo4j 지식 그래프 및 종가매매 퀀트 현황
         </p>
       </div>
 
@@ -75,9 +75,9 @@ export default function DashboardPage() {
             <span>AI 자연어 분석</span>
             <Bot className="w-4 h-4 text-amber-400" />
           </div>
-          <div className="mt-3 text-2xl font-bold text-white">gemma4:e4b</div>
+          <div className="mt-3 text-2xl font-bold text-white">GPU2 + Ollama</div>
           <div className="mt-1 text-xs text-amber-400 flex items-center gap-1">
-            <span>Ollama 실시간 요약·감성</span>
+            <span>Qwen3.8 / Gemma4 하이브리드</span>
           </div>
         </div>
 

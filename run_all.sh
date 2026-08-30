@@ -38,7 +38,7 @@ trap cleanup INT TERM EXIT
 
 echo "========================================================"
 echo "🌟 [Horus 2.0] 백엔드 코어, 어드민 콘솔 및 서비스 웹 UI 동시 실행"
-echo "👉 서비스 Web UI:   http://localhost:3000"
+echo "👉 서비스 Web UI:   http://localhost:3005 (프록시: http://localhost:3000)"
 echo "👉 어드민 Console:   http://localhost:3001"
 echo "👉 백엔드 API Docs:  http://localhost:8000/docs"
 echo "💡 중단하려면 [Ctrl + C]를 누르세요. (즉시 모두 종료됩니다)"

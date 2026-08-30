@@ -34,8 +34,17 @@ class Settings(BaseSettings):
     NEO4J_PASSWORD: str = "horus_graph"
 
     # LLM Settings
+    DEFAULT_LLM_PROVIDER: str = "gpu2"  # "gpu2", "ollama", "gemini"
+    ENABLE_OLLAMA_FALLBACK: bool = False
+
     OLLAMA_BASE_URL: str = "http://localhost:11434"
-    OLLAMA_MODEL: str = "gemma4:e4b"
+    OLLAMA_MODEL: str = "gemma4:e4b-mlx"
+    
+    GPU2_BASE_URL: str = "http://gpu2:8000/v1"
+    GPU2_MODEL: str = "cyankiwi/Qwen3.8-27B-AWQ-INT4"
+    GPU2_MAX_RETRIES: int = 3
+    GPU2_RETRY_BACKOFF: float = 1.5
+    GPU2_HEALTHCHECK_TIMEOUT: float = 5.0
     
     GEMINI_API_KEY: Optional[str] = None
     GEMINI_MODEL: str = "gemini-2.0-flash"
