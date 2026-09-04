@@ -135,7 +135,7 @@ export default function CrawlAdminDashboard() {
   const [isWrapperModalOpen, setIsWrapperModalOpen] = useState(false);
   const [selectedSourceForWrapper, setSelectedSourceForWrapper] = useState<CrawlSource | null>(null);
   const [wrapperMode, setWrapperMode] = useState<"anchor" | "auto" | "manual">("anchor");
-  const [wrapperModelName, setWrapperModelName] = useState("gpu2:cyankiwi/Qwen3.8-27B-AWQ-INT4");
+  const [wrapperModelName, setWrapperModelName] = useState("gpu2:qwen3.8:27b");
   const [customModelInput, setCustomModelInput] = useState(false);
   const [synthesizingWrapper, setSynthesizingWrapper] = useState(false);
   const [wrapperResult, setWrapperResult] = useState<WrapperSynthesisResponse | null>(null);
@@ -149,7 +149,7 @@ export default function CrawlAdminDashboard() {
     views_selector: "",
     category_selector: "",
     image_selector: "",
-    llm_model: "gpu2:cyankiwi/Qwen3.8-27B-AWQ-INT4",
+    llm_model: "gpu2:qwen3.8:27b",
   });
   const [testingRules, setTestingRules] = useState(false);
   const [savingWrapper, setSavingWrapper] = useState(false);
@@ -163,8 +163,8 @@ export default function CrawlAdminDashboard() {
 
   // 🧠 GPU2 Dual 5070 Ti 8-Way 병렬 GPU 작업 큐 & 텍스트/비전 듀얼 서브시스템 상태
   const [gpuStatus, setGpuStatus] = useState<GPUUnifiedStatusResponse | null>(null);
-  const [textModelName, setTextModelName] = useState<string>("gpu2:cyankiwi/Qwen3.8-27B-AWQ-INT4");
-  const [visionModelName, setVisionModelName] = useState<string>("gpu2:cyankiwi/Qwen3.8-27B-AWQ-INT4");
+  const [textModelName, setTextModelName] = useState<string>("gpu2:qwen3.8:27b");
+  const [visionModelName, setVisionModelName] = useState<string>("gpu2:qwen3.8:27b");
   const [textConcurrency, setTextConcurrency] = useState<number>(8);
   const [visionConcurrency, setVisionConcurrency] = useState<number>(4);
   const [changingConcurrency, setChangingConcurrency] = useState(false);
@@ -172,7 +172,7 @@ export default function CrawlAdminDashboard() {
   const [controllingText, setControllingText] = useState(false);
   const [controllingVision, setControllingVision] = useState(false);
   const [llmWorkerStatus, setLlmWorkerStatus] = useState<LLMWorkerStatusResponse | null>(null);
-  const [selectedWorkerModel, setSelectedWorkerModel] = useState<string>("gpu2:cyankiwi/Qwen3.8-27B-AWQ-INT4");
+  const [selectedWorkerModel, setSelectedWorkerModel] = useState<string>("gpu2:qwen3.8:27b");
   const [controllingWorker, setControllingWorker] = useState(false);
 
   // 📊 시계열 분석 차트 & 실시간 라이브 이벤트 스트림 상태
@@ -211,7 +211,7 @@ export default function CrawlAdminDashboard() {
   const [inspectingDom, setInspectingDom] = useState(false);
   const [domSearchQuery, setDomSearchQuery] = useState("");
   const [installedModels, setInstalledModels] = useState<string[]>([
-    "gpu2:cyankiwi/Qwen3.8-27B-AWQ-INT4",
+    "gpu2:qwen3.8:27b",
     "gemma4:e4b-mlx",
     "gemma4:12b-mlx",
     "qwen2.5:27b",
@@ -697,7 +697,7 @@ export default function CrawlAdminDashboard() {
       if (gpu2Model) model = gpu2Model;
       else if (models.includes("gemma4:12b-mlx")) model = "gemma4:12b-mlx";
       else if (models.includes("gemma4:12b")) model = "gemma4:12b";
-      else model = models[0] || "gpu2:cyankiwi/Qwen3.8-27B-AWQ-INT4";
+      else model = models[0] || "gpu2:qwen3.8:27b";
     }
     setWrapperModelName(model);
     setCustomModelInput(!models.includes(model));

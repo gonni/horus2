@@ -19,7 +19,7 @@ class VisionTranscriber:
     """
     def __init__(self, model_name: Optional[str] = None):
         self.gpu2_base_url = getattr(config, "GPU2_BASE_URL", "http://gpu2:8000/v1")
-        self.gpu2_default_model = getattr(config, "GPU2_MODEL", "cyankiwi/Qwen3.8-27B-AWQ-INT4")
+        self.gpu2_default_model = getattr(config, "GPU2_MODEL", "qwen3.8:27b")
         self.ollama_url = getattr(config, "OLLAMA_BASE_URL", "http://localhost:11434")
         self.model_name = model_name or f"gpu2:{self.gpu2_default_model}"
         self.gemini_key = getattr(config, "GEMINI_API_KEY", None)
@@ -306,7 +306,7 @@ class VisionTranscriber:
             }
 
         # 실패 시 안내
-        guide_msg = "GPU2 Vision(Qwen3.8-27B-AWQ-INT4) 호출 실패."
+        guide_msg = "GPU2 Vision(qwen3.8:27b) 호출 실패."
         if last_error:
             guide_msg = f"{guide_msg} (오류 상세: {last_error})"
 

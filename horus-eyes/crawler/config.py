@@ -24,7 +24,7 @@ class CrawlerSettings(BaseSettings):
     ENABLE_OLLAMA_FALLBACK: bool = False
 
     GPU2_BASE_URL: str = "http://gpu2:8000/v1"
-    GPU2_MODEL: str = "cyankiwi/Qwen3.8-27B-AWQ-INT4"
+    GPU2_MODEL: str = "qwen3.8:27b"
     GPU2_MAX_RETRIES: int = 3
     GPU2_RETRY_BACKOFF: float = 1.5
     DEFAULT_CONCURRENCY: int = 8

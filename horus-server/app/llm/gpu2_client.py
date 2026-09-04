@@ -36,7 +36,7 @@ class GPU2Client:
 
     async def resolve_model(self, requested_model: Optional[str] = None) -> str:
         target = requested_model or self.default_model
-        # Strip provider prefix if present (e.g. "gpu2:cyankiwi/Qwen3.8-27B-AWQ-INT4")
+        # Strip provider prefix if present (e.g. "gpu2:qwen3.8:27b")
         if target.startswith("gpu2:"):
             target = target[5:]
 

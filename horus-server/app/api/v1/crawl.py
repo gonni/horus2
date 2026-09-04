@@ -318,7 +318,7 @@ async def update_gpu_concurrency(payload: GPUConcurrencyRequest):
 @router.post("/gpu/text/start", response_model=GPUUnifiedStatusResponse)
 async def start_text_worker(payload: Optional[TextWorkerControlRequest] = None):
     """텍스트 NLP 서브시스템 시작 (요약, 감성 분석, 엔티티 추출, 8-Way 병렬)"""
-    model_name = payload.model_name if (payload and payload.model_name) else "gpu2:cyankiwi/Qwen3.8-27B-AWQ-INT4"
+    model_name = payload.model_name if (payload and payload.model_name) else "gpu2:qwen3.8:27b"
     concurrency = payload.concurrency if payload else 8
     await llm_worker.start_text(model_name=model_name, concurrency=concurrency)
     return GPUUnifiedStatusResponse(**(await llm_worker.get_unified_status()))
@@ -345,7 +345,7 @@ async def stop_text_worker():
 @router.post("/gpu/vision/start", response_model=GPUUnifiedStatusResponse)
 async def start_vision_worker(payload: Optional[VisionWorkerControlRequest] = None):
     """비전 Image-to-Text 서브시스템 시작 (이미지 텍스트 변환, 본문 주입, 8-Way 병렬)"""
-    model_name = payload.model_name if (payload and payload.model_name) else "gpu2:cyankiwi/Qwen3.8-27B-AWQ-INT4"
+    model_name = payload.model_name if (payload and payload.model_name) else "gpu2:qwen3.8:27b"
     concurrency = payload.concurrency if payload else 4
     await llm_worker.start_vision(model_name=model_name, concurrency=concurrency)
     return GPUUnifiedStatusResponse(**(await llm_worker.get_unified_status()))
@@ -371,7 +371,7 @@ async def stop_vision_worker():
 # 하위 호환성 레거시 라우트
 @router.post("/nlp/worker/start", response_model=LLMWorkerStatusResponse)
 async def start_llm_worker(payload: Optional[LLMWorkerControlRequest] = None):
-    model_name = payload.model_name if payload else "gpu2:cyankiwi/Qwen3.8-27B-AWQ-INT4"
+    model_name = payload.model_name if payload else "gpu2:qwen3.8:27b"
     batch_size = payload.batch_size if payload else 8
     await llm_worker.start_text(model_name=model_name, concurrency=batch_size)
     return LLMWorkerStatusResponse(**(await llm_worker.get_status()))
@@ -1555,7 +1555,7 @@ async def get_installed_gpu_and_ollama_models():
 
     if not gpu2_models:
         gpu2_models = [
-            "gpu2:cyankiwi/Qwen3.8-27B-AWQ-INT4"
+            "gpu2:qwen3.8:27b"
         ]
 
     ollama_models = []
@@ -1577,7 +1577,7 @@ async def get_installed_gpu_and_ollama_models():
         ]
 
     combined_models = gpu2_models + [m for m in ollama_models if m not in gpu2_models]
-    default_model = gpu2_models[0] if gpu2_models else "gpu2:cyankiwi/Qwen3.8-27B-AWQ-INT4"
+    default_model = gpu2_models[0] if gpu2_models else "gpu2:qwen3.8:27b"
 
     return {
         "models": combined_models,

@@ -31,7 +31,7 @@ class ConcurrentGPUWorker:
         self.default_provider: str = getattr(config, "DEFAULT_LLM_PROVIDER", "gpu2")
         self.enable_ollama_fallback: bool = getattr(config, "ENABLE_OLLAMA_FALLBACK", False)
         self.gpu2_base_url: str = getattr(config, "GPU2_BASE_URL", "http://gpu2:8000/v1")
-        self.gpu2_default_model: str = getattr(config, "GPU2_MODEL", "cyankiwi/Qwen3.8-27B-AWQ-INT4")
+        self.gpu2_default_model: str = getattr(config, "GPU2_MODEL", "qwen3.8:27b")
         self.ollama_url: str = config.OLLAMA_BASE_URL or "http://localhost:11434"
         self.transcriber = VisionTranscriber()
 

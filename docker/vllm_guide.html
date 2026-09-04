@@ -1,0 +1,745 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>5070 Ti Dual — vLLM 설정 수정 및 측정</title>
+<style>
+  :root {
+    --bg: #0e1117;
+    --panel: #161b22;
+    --panel-2: #1c2129;
+    --border: #2a313c;
+    --text: #e6edf3;
+    --dim: #9aa5b1;
+    --mint: #7DF5C0;
+    --amber: #f5c97d;
+    --red: #f57d7d;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 32px 20px 80px;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo",
+                 "Malgun Gothic", "Segoe UI", sans-serif;
+    line-height: 1.65;
+    font-size: 15px;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; }
+
+  header {
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 20px;
+    margin-bottom: 32px;
+  }
+  h1 {
+    font-size: 22px;
+    margin: 0 0 6px;
+    letter-spacing: -0.01em;
+  }
+  header .meta { color: var(--dim); font-size: 13px; font-family: var(--mono); }
+
+  h2 {
+    font-size: 17px;
+    margin: 40px 0 14px;
+    padding-left: 11px;
+    border-left: 3px solid var(--mint);
+  }
+  h3 { font-size: 14px; margin: 24px 0 8px; color: var(--dim);
+       text-transform: uppercase; letter-spacing: 0.06em; }
+
+  pre {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 16px;
+    overflow-x: auto;
+    font-family: var(--mono);
+    font-size: 13px;
+    line-height: 1.55;
+    margin: 12px 0;
+  }
+  code { font-family: var(--mono); font-size: 0.93em; }
+  p > code, li > code, td code {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 5px;
+  }
+  .add  { color: var(--mint); }
+  .mod  { color: var(--amber); }
+  .del  { color: var(--red); text-decoration: line-through; opacity: .7; }
+  .cmt  { color: var(--dim); }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 14px 0;
+    font-size: 14px;
+  }
+  th, td {
+    text-align: left;
+    padding: 9px 12px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  th { color: var(--dim); font-weight: 600; font-size: 12px;
+       text-transform: uppercase; letter-spacing: 0.05em; }
+  tbody tr:last-child td { border-bottom: none; }
+
+  .tag {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 1px 7px;
+    border-radius: 3px;
+    border: 1px solid;
+    white-space: nowrap;
+  }
+  .t-add { color: var(--mint);  border-color: #2f6b52; background: #12241c; }
+  .t-mod { color: var(--amber); border-color: #6b5a2f; background: #241f12; }
+  .t-del { color: var(--red);   border-color: #6b3535; background: #241414; }
+
+  .note {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--mint);
+    border-radius: 0 6px 6px 0;
+    padding: 14px 16px;
+    margin: 18px 0;
+    font-size: 14px;
+  }
+  .note.warn { border-left-color: var(--amber); }
+  .note.crit { border-left-color: var(--red); }
+  .note strong { color: var(--text); }
+  .note p { margin: 0; }
+  .note p + p { margin-top: 8px; }
+
+  ol.steps { padding-left: 0; list-style: none; counter-reset: s; margin: 16px 0; }
+  ol.steps > li {
+    counter-increment: s;
+    position: relative;
+    padding-left: 34px;
+    margin-bottom: 22px;
+  }
+  ol.steps > li::before {
+    content: counter(s);
+    position: absolute; left: 0; top: 1px;
+    width: 22px; height: 22px;
+    border: 1px solid var(--mint);
+    border-radius: 50%;
+    color: var(--mint);
+    font-family: var(--mono);
+    font-size: 12px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  ol.steps > li > strong { display: block; margin-bottom: 4px; }
+
+  .verdict {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+    margin: 18px 0;
+  }
+  .verdict > div {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 16px;
+  }
+  .verdict h4 {
+    margin: 0 0 8px;
+    font-size: 14px;
+    font-family: var(--mono);
+  }
+  .verdict .ok h4 { color: var(--mint); }
+  .verdict .no h4 { color: var(--amber); }
+  .verdict p { margin: 0; font-size: 13.5px; color: var(--dim); }
+  .verdict p strong { color: var(--text); }
+
+  ul.plain { padding-left: 20px; }
+  ul.plain li { margin-bottom: 5px; }
+
+  footer {
+    margin-top: 56px;
+    padding-top: 18px;
+    border-top: 1px solid var(--border);
+    color: var(--dim);
+    font-size: 13px;
+  }
+  @media (max-width: 620px) {
+    .verdict { grid-template-columns: 1fr; }
+    body { padding: 20px 14px 60px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>5070 Ti Dual — vLLM 설정 수정 및 측정</h1>
+  <div class="meta">cyankiwi/Qwen3.8-27B-AWQ-INT4 &nbsp;·&nbsp; TP=2 &nbsp;·&nbsp; gpu2</div>
+</header>
+
+<div class="note crit">
+  <p><strong>보안 — 먼저 처리</strong></p>
+  <p>HF 토큰이 평문으로 노출되었습니다. <a href="https://huggingface.co/settings/tokens" style="color:var(--mint)">huggingface.co/settings/tokens</a>에서 폐기 후 재발급하세요.
+  API 엔드포인트도 인증 없이 열려 있습니다 — LiteLLM을 앞단에 두거나 <code>--api-key</code>를 적용하세요.</p>
+</div>
+
+<h2>변경 요약</h2>
+<table>
+  <thead>
+    <tr><th style="width:80px">구분</th><th>항목</th><th>비고</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><span class="tag t-add">추가</span></td>
+      <td><code>--max-num-batched-tokens 8192</code></td>
+      <td><strong>가장 중요.</strong> 미지정 시 청크가 작게 쪼개져 GEMM 축소 + all-reduce 횟수 폭증</td>
+    </tr>
+    <tr>
+      <td><span class="tag t-add">추가</span></td>
+      <td><code>--enable-prefix-caching</code></td>
+      <td>프리필이 전체 시간의 80%. 고정 스키마 재프리필 제거</td>
+    </tr>
+    <tr>
+      <td><span class="tag t-add">추가</span></td>
+      <td><code>--served-model-name qwen3.8:27b</code></td>
+      <td>5090 서버와 이름 통일 → 클라이언트 코드 공용</td>
+    </tr>
+    <tr>
+      <td><span class="tag t-mod">수정</span></td>
+      <td><code>--max-num-seqs</code> 32 → <strong>8</strong></td>
+      <td>동시성 32는 실측상 무의미 (처리량 +0.3%, TTFT 4.6배 악화)</td>
+    </tr>
+    <tr>
+      <td><span class="tag t-mod">수정</span></td>
+      <td><code>image: latest</code> → <strong>v0.23.0-cu129</strong></td>
+      <td>5090과 동일 버전으로 변수 제거 + 재현성</td>
+    </tr>
+    <tr>
+      <td><span class="tag t-del">제거</span></td>
+      <td><code>PYTORCH_CUDA_ALLOC_CONF</code></td>
+      <td>vLLM 메모리 프로파일링과 간섭 가능</td>
+    </tr>
+    <tr>
+      <td><span class="tag t-del">제거</span></td>
+      <td><code>HF_TOKEN</code> 평문</td>
+      <td><code>.env</code>로 분리</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>docker-compose.yml</h2>
+<pre>services:
+  vllm-qwen:
+    image: vllm/vllm-openai:<span class="mod">v0.23.0-cu129</span>          <span class="cmt"># latest에서 고정</span>
+    container_name: vllm-qwen3.8-27b-awq
+    runtime: nvidia
+    restart: unless-stopped
+    ipc: host
+    ports:
+      - 8000:8000
+    <span class="mod">env_file:</span>
+      <span class="mod">- .env</span>                                <span class="cmt"># HF_TOKEN 분리, ALLOC_CONF 제거</span>
+    volumes:
+      - ~/.cache/huggingface:/root/.cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    command: &gt;
+      --model cyankiwi/Qwen3.8-27B-AWQ-INT4
+      <span class="add">--served-model-name qwen3.8:27b</span>
+      --tensor-parallel-size 2
+      --gpu-memory-utilization 0.90
+      --max-model-len 8192
+      <span class="mod">--max-num-seqs 8</span>
+      <span class="add">--max-num-batched-tokens 8192</span>
+      --kv-cache-dtype fp8
+      <span class="add">--enable-prefix-caching</span>
+      --enable-chunked-prefill
+      --reasoning-parser qwen3
+      --port 8000
+      --host 0.0.0.0</pre>
+
+<h3>.env 생성</h3>
+<pre>cat &gt; .env &lt;&lt;'EOF'
+HF_TOKEN=hf_새토큰
+EOF
+chmod 600 .env
+echo ".env" &gt;&gt; .gitignore</pre>
+
+<h2>실행 절차</h2>
+
+<ol class="steps">
+  <li>
+    <strong>수정 전 로그 확보</strong>
+    <p style="margin:0 0 8px;color:var(--dim);font-size:14px">
+      기존 <code>max_num_batched_tokens</code> 값이 이번 진단의 핵심 증거입니다. 재기동 전에 반드시 저장하세요.</p>
+<pre>docker logs vllm-qwen3.8-27b-awq 2&gt;&amp;1 | grep -iE \
+  "max_num_batched_tokens|Model loading took|GPU KV cache size|Maximum concurrency" \
+  | tee before.txt</pre>
+  </li>
+
+  <li>
+    <strong>재기동</strong>
+<pre>docker compose down &amp;&amp; docker compose up -d
+docker compose logs -f        <span class="cmt"># 기동 완료까지 대기</span></pre>
+  </li>
+
+  <li>
+    <strong>수정 후 로그</strong>
+<pre>docker compose logs 2&gt;&amp;1 | grep -iE \
+  "max_num_batched_tokens|Model loading took|GPU KV cache size|Maximum concurrency" \
+  | tee after.txt</pre>
+  </li>
+
+  <li>
+    <strong>측정 — 전력 동시 관측</strong>
+<pre><span class="cmt"># 터미널 A</span>
+nvidia-smi --query-gpu=index,power.draw,utilization.gpu,clocks.sm \
+  --format=csv -l 2
+
+<span class="cmt"># 터미널 B</span>
+python vllm_bench.py --concurrency 8</pre>
+  </li>
+</ol>
+
+<h2>판정 기준</h2>
+
+<div class="verdict">
+  <div class="ok">
+    <h4>전력 230W 이상</h4>
+    <p><strong>원인 확정 — 청크 분할.</strong> 텐서코어가 제대로 먹기 시작한 신호. TP=2 유지. 추가 조치 불필요.</p>
+  </div>
+  <div class="no">
+    <h4>전력 200W 유지</h4>
+    <p><strong>all-reduce 대기가 지배적.</strong> PP=2 A/B로 진행 — <code>--pipeline-parallel-size 2</code>, 청크 4096, seqs 16.</p>
+  </div>
+</div>
+
+<h3>목표 수치</h3>
+<table>
+  <thead>
+    <tr><th>지표</th><th>현재</th><th>목표</th><th>5090</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>프리필 (동시 1)</td><td>2,120 tok/s</td><td><strong>2,900~3,400</strong></td><td>4,137 tok/s</td></tr>
+    <tr><td>배치 출력 (동시 8)</td><td>117.5 tok/s</td><td><strong>170~200</strong></td><td>221.8 tok/s</td></tr>
+    <tr><td>TTFT p50</td><td>11,029 ms</td><td><strong>4,000~6,000</strong></td><td>2,069 ms</td></tr>
+    <tr><td>96건 소요</td><td>232 s</td><td><strong>140~165 s</strong></td><td>120 s</td></tr>
+    <tr><td>전력</td><td>180~200 W</td><td><strong>230~250 W</strong></td><td>—</td></tr>
+  </tbody>
+</table>
+
+<div class="note warn">
+  <p><strong>로그에서 특히 볼 것</strong></p>
+  <p><code>Maximum concurrency for 8192 tokens per request: N</code> — 엔진이 계산한 실제 동시성 상한입니다.
+  N이 8 미만이면 KV 부족이 확정되므로 <code>--max-model-len</code>을 6144로 낮춰야 합니다.</p>
+</div>
+
+<h2>다음 단계 (한 번에 하나씩)</h2>
+<ul class="plain">
+  <li><strong>PP=2 A/B</strong> — 전력이 230W에 못 미칠 경우. 배치 처리량 +20% 이상일 때만 채택하고, 채택 전 골든셋으로 출력 일치 검증</li>
+  <li><strong>NVFP4 A/B</strong> — 프리필이 80%라 FP4 텐서코어가 공격하는 지점. 단 가중치가 0.8 GiB 크므로 <code>GPU KV cache size</code>를 함께 비교</li>
+  <li><strong>MTP</strong> — <code>--speculative-config '{"method":"mtp","num_speculative_tokens":3}'</code>. 디코드만 개선되어 전체 8~10%</li>
+  <li><strong>LiteLLM</strong> — vLLM 포트를 외부에 열지 말고 프록시만 노출. <code>drop_params: false</code>, <code>request_timeout: 900</code></li>
+</ul>
+
+<h2>회신할 4가지</h2>
+<table>
+  <tbody>
+    <tr><td style="width:130px"><code>before.txt</code></td><td>수정 전 로그 — 기존 청크 크기</td></tr>
+    <tr><td><code>after.txt</code></td><td>수정 후 로그 — KV 캐시, 최대 동시성</td></tr>
+    <tr><td>벤치마크 출력</td><td><code>python vllm_bench.py --concurrency 8</code> 전문</td></tr>
+    <tr><td>전력 범위</td><td>부하 중 <code>power.draw</code> 최소~최대</td></tr>
+  </tbody>
+</table>
+
+<footer>
+  목표 수치는 추정입니다. 이 대화에서 계산 기반 추정이 실측에 여러 번 뒤집혔으니, 위 숫자도 측정 결과로 교정하시면 됩니다.
+</footer>
+
+</div>
+</body>
+</html><!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>5070 Ti Dual — vLLM 설정 수정 및 측정</title>
+<style>
+  :root {
+    --bg: #0e1117;
+    --panel: #161b22;
+    --panel-2: #1c2129;
+    --border: #2a313c;
+    --text: #e6edf3;
+    --dim: #9aa5b1;
+    --mint: #7DF5C0;
+    --amber: #f5c97d;
+    --red: #f57d7d;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 32px 20px 80px;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo",
+                 "Malgun Gothic", "Segoe UI", sans-serif;
+    line-height: 1.65;
+    font-size: 15px;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; }
+
+  header {
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 20px;
+    margin-bottom: 32px;
+  }
+  h1 {
+    font-size: 22px;
+    margin: 0 0 6px;
+    letter-spacing: -0.01em;
+  }
+  header .meta { color: var(--dim); font-size: 13px; font-family: var(--mono); }
+
+  h2 {
+    font-size: 17px;
+    margin: 40px 0 14px;
+    padding-left: 11px;
+    border-left: 3px solid var(--mint);
+  }
+  h3 { font-size: 14px; margin: 24px 0 8px; color: var(--dim);
+       text-transform: uppercase; letter-spacing: 0.06em; }
+
+  pre {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 16px;
+    overflow-x: auto;
+    font-family: var(--mono);
+    font-size: 13px;
+    line-height: 1.55;
+    margin: 12px 0;
+  }
+  code { font-family: var(--mono); font-size: 0.93em; }
+  p > code, li > code, td code {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 5px;
+  }
+  .add  { color: var(--mint); }
+  .mod  { color: var(--amber); }
+  .del  { color: var(--red); text-decoration: line-through; opacity: .7; }
+  .cmt  { color: var(--dim); }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 14px 0;
+    font-size: 14px;
+  }
+  th, td {
+    text-align: left;
+    padding: 9px 12px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  th { color: var(--dim); font-weight: 600; font-size: 12px;
+       text-transform: uppercase; letter-spacing: 0.05em; }
+  tbody tr:last-child td { border-bottom: none; }
+
+  .tag {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 1px 7px;
+    border-radius: 3px;
+    border: 1px solid;
+    white-space: nowrap;
+  }
+  .t-add { color: var(--mint);  border-color: #2f6b52; background: #12241c; }
+  .t-mod { color: var(--amber); border-color: #6b5a2f; background: #241f12; }
+  .t-del { color: var(--red);   border-color: #6b3535; background: #241414; }
+
+  .note {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--mint);
+    border-radius: 0 6px 6px 0;
+    padding: 14px 16px;
+    margin: 18px 0;
+    font-size: 14px;
+  }
+  .note.warn { border-left-color: var(--amber); }
+  .note.crit { border-left-color: var(--red); }
+  .note strong { color: var(--text); }
+  .note p { margin: 0; }
+  .note p + p { margin-top: 8px; }
+
+  ol.steps { padding-left: 0; list-style: none; counter-reset: s; margin: 16px 0; }
+  ol.steps > li {
+    counter-increment: s;
+    position: relative;
+    padding-left: 34px;
+    margin-bottom: 22px;
+  }
+  ol.steps > li::before {
+    content: counter(s);
+    position: absolute; left: 0; top: 1px;
+    width: 22px; height: 22px;
+    border: 1px solid var(--mint);
+    border-radius: 50%;
+    color: var(--mint);
+    font-family: var(--mono);
+    font-size: 12px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  ol.steps > li > strong { display: block; margin-bottom: 4px; }
+
+  .verdict {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+    margin: 18px 0;
+  }
+  .verdict > div {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 16px;
+  }
+  .verdict h4 {
+    margin: 0 0 8px;
+    font-size: 14px;
+    font-family: var(--mono);
+  }
+  .verdict .ok h4 { color: var(--mint); }
+  .verdict .no h4 { color: var(--amber); }
+  .verdict p { margin: 0; font-size: 13.5px; color: var(--dim); }
+  .verdict p strong { color: var(--text); }
+
+  ul.plain { padding-left: 20px; }
+  ul.plain li { margin-bottom: 5px; }
+
+  footer {
+    margin-top: 56px;
+    padding-top: 18px;
+    border-top: 1px solid var(--border);
+    color: var(--dim);
+    font-size: 13px;
+  }
+  @media (max-width: 620px) {
+    .verdict { grid-template-columns: 1fr; }
+    body { padding: 20px 14px 60px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>5070 Ti Dual — vLLM 설정 수정 및 측정</h1>
+  <div class="meta">cyankiwi/Qwen3.8-27B-AWQ-INT4 &nbsp;·&nbsp; TP=2 &nbsp;·&nbsp; gpu2</div>
+</header>
+
+<div class="note crit">
+  <p><strong>보안 — 먼저 처리</strong></p>
+  <p>HF 토큰이 평문으로 노출되었습니다. <a href="https://huggingface.co/settings/tokens" style="color:var(--mint)">huggingface.co/settings/tokens</a>에서 폐기 후 재발급하세요.
+  API 엔드포인트도 인증 없이 열려 있습니다 — LiteLLM을 앞단에 두거나 <code>--api-key</code>를 적용하세요.</p>
+</div>
+
+<h2>변경 요약</h2>
+<table>
+  <thead>
+    <tr><th style="width:80px">구분</th><th>항목</th><th>비고</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><span class="tag t-add">추가</span></td>
+      <td><code>--max-num-batched-tokens 8192</code></td>
+      <td><strong>가장 중요.</strong> 미지정 시 청크가 작게 쪼개져 GEMM 축소 + all-reduce 횟수 폭증</td>
+    </tr>
+    <tr>
+      <td><span class="tag t-add">추가</span></td>
+      <td><code>--enable-prefix-caching</code></td>
+      <td>프리필이 전체 시간의 80%. 고정 스키마 재프리필 제거</td>
+    </tr>
+    <tr>
+      <td><span class="tag t-add">추가</span></td>
+      <td><code>--served-model-name qwen3.8:27b</code></td>
+      <td>5090 서버와 이름 통일 → 클라이언트 코드 공용</td>
+    </tr>
+    <tr>
+      <td><span class="tag t-mod">수정</span></td>
+      <td><code>--max-num-seqs</code> 32 → <strong>8</strong></td>
+      <td>동시성 32는 실측상 무의미 (처리량 +0.3%, TTFT 4.6배 악화)</td>
+    </tr>
+    <tr>
+      <td><span class="tag t-mod">수정</span></td>
+      <td><code>image: latest</code> → <strong>v0.23.0-cu129</strong></td>
+      <td>5090과 동일 버전으로 변수 제거 + 재현성</td>
+    </tr>
+    <tr>
+      <td><span class="tag t-del">제거</span></td>
+      <td><code>PYTORCH_CUDA_ALLOC_CONF</code></td>
+      <td>vLLM 메모리 프로파일링과 간섭 가능</td>
+    </tr>
+    <tr>
+      <td><span class="tag t-del">제거</span></td>
+      <td><code>HF_TOKEN</code> 평문</td>
+      <td><code>.env</code>로 분리</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>docker-compose.yml</h2>
+<pre>services:
+  vllm-qwen:
+    image: vllm/vllm-openai:<span class="mod">v0.23.0-cu129</span>          <span class="cmt"># latest에서 고정</span>
+    container_name: vllm-qwen3.8-27b-awq
+    runtime: nvidia
+    restart: unless-stopped
+    ipc: host
+    ports:
+      - 8000:8000
+    <span class="mod">env_file:</span>
+      <span class="mod">- .env</span>                                <span class="cmt"># HF_TOKEN 분리, ALLOC_CONF 제거</span>
+    volumes:
+      - ~/.cache/huggingface:/root/.cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    command: &gt;
+      --model cyankiwi/Qwen3.8-27B-AWQ-INT4
+      <span class="add">--served-model-name qwen3.8:27b</span>
+      --tensor-parallel-size 2
+      --gpu-memory-utilization 0.90
+      --max-model-len 8192
+      <span class="mod">--max-num-seqs 8</span>
+      <span class="add">--max-num-batched-tokens 8192</span>
+      --kv-cache-dtype fp8
+      <span class="add">--enable-prefix-caching</span>
+      --enable-chunked-prefill
+      --reasoning-parser qwen3
+      --port 8000
+      --host 0.0.0.0</pre>
+
+<h3>.env 생성</h3>
+<pre>cat &gt; .env &lt;&lt;'EOF'
+HF_TOKEN=hf_새토큰
+EOF
+chmod 600 .env
+echo ".env" &gt;&gt; .gitignore</pre>
+
+<h2>실행 절차</h2>
+
+<ol class="steps">
+  <li>
+    <strong>수정 전 로그 확보</strong>
+    <p style="margin:0 0 8px;color:var(--dim);font-size:14px">
+      기존 <code>max_num_batched_tokens</code> 값이 이번 진단의 핵심 증거입니다. 재기동 전에 반드시 저장하세요.</p>
+<pre>docker logs vllm-qwen3.8-27b-awq 2&gt;&amp;1 | grep -iE \
+  "max_num_batched_tokens|Model loading took|GPU KV cache size|Maximum concurrency" \
+  | tee before.txt</pre>
+  </li>
+
+  <li>
+    <strong>재기동</strong>
+<pre>docker compose down &amp;&amp; docker compose up -d
+docker compose logs -f        <span class="cmt"># 기동 완료까지 대기</span></pre>
+  </li>
+
+  <li>
+    <strong>수정 후 로그</strong>
+<pre>docker compose logs 2&gt;&amp;1 | grep -iE \
+  "max_num_batched_tokens|Model loading took|GPU KV cache size|Maximum concurrency" \
+  | tee after.txt</pre>
+  </li>
+
+  <li>
+    <strong>측정 — 전력 동시 관측</strong>
+<pre><span class="cmt"># 터미널 A</span>
+nvidia-smi --query-gpu=index,power.draw,utilization.gpu,clocks.sm \
+  --format=csv -l 2
+
+<span class="cmt"># 터미널 B</span>
+python vllm_bench.py --concurrency 8</pre>
+  </li>
+</ol>
+
+<h2>판정 기준</h2>
+
+<div class="verdict">
+  <div class="ok">
+    <h4>전력 230W 이상</h4>
+    <p><strong>원인 확정 — 청크 분할.</strong> 텐서코어가 제대로 먹기 시작한 신호. TP=2 유지. 추가 조치 불필요.</p>
+  </div>
+  <div class="no">
+    <h4>전력 200W 유지</h4>
+    <p><strong>all-reduce 대기가 지배적.</strong> PP=2 A/B로 진행 — <code>--pipeline-parallel-size 2</code>, 청크 4096, seqs 16.</p>
+  </div>
+</div>
+
+<h3>목표 수치</h3>
+<table>
+  <thead>
+    <tr><th>지표</th><th>현재</th><th>목표</th><th>5090</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>프리필 (동시 1)</td><td>2,120 tok/s</td><td><strong>2,900~3,400</strong></td><td>4,137 tok/s</td></tr>
+    <tr><td>배치 출력 (동시 8)</td><td>117.5 tok/s</td><td><strong>170~200</strong></td><td>221.8 tok/s</td></tr>
+    <tr><td>TTFT p50</td><td>11,029 ms</td><td><strong>4,000~6,000</strong></td><td>2,069 ms</td></tr>
+    <tr><td>96건 소요</td><td>232 s</td><td><strong>140~165 s</strong></td><td>120 s</td></tr>
+    <tr><td>전력</td><td>180~200 W</td><td><strong>230~250 W</strong></td><td>—</td></tr>
+  </tbody>
+</table>
+
+<div class="note warn">
+  <p><strong>로그에서 특히 볼 것</strong></p>
+  <p><code>Maximum concurrency for 8192 tokens per request: N</code> — 엔진이 계산한 실제 동시성 상한입니다.
+  N이 8 미만이면 KV 부족이 확정되므로 <code>--max-model-len</code>을 6144로 낮춰야 합니다.</p>
+</div>
+
+<h2>다음 단계 (한 번에 하나씩)</h2>
+<ul class="plain">
+  <li><strong>PP=2 A/B</strong> — 전력이 230W에 못 미칠 경우. 배치 처리량 +20% 이상일 때만 채택하고, 채택 전 골든셋으로 출력 일치 검증</li>
+  <li><strong>NVFP4 A/B</strong> — 프리필이 80%라 FP4 텐서코어가 공격하는 지점. 단 가중치가 0.8 GiB 크므로 <code>GPU KV cache size</code>를 함께 비교</li>
+  <li><strong>MTP</strong> — <code>--speculative-config '{"method":"mtp","num_speculative_tokens":3}'</code>. 디코드만 개선되어 전체 8~10%</li>
+  <li><strong>LiteLLM</strong> — vLLM 포트를 외부에 열지 말고 프록시만 노출. <code>drop_params: false</code>, <code>request_timeout: 900</code></li>
+</ul>
+
+<h2>회신할 4가지</h2>
+<table>
+  <tbody>
+    <tr><td style="width:130px"><code>before.txt</code></td><td>수정 전 로그 — 기존 청크 크기</td></tr>
+    <tr><td><code>after.txt</code></td><td>수정 후 로그 — KV 캐시, 최대 동시성</td></tr>
+    <tr><td>벤치마크 출력</td><td><code>python vllm_bench.py --concurrency 8</code> 전문</td></tr>
+    <tr><td>전력 범위</td><td>부하 중 <code>power.draw</code> 최소~최대</td></tr>
+  </tbody>
+</table>
+
+<footer>
+  목표 수치는 추정입니다. 이 대화에서 계산 기반 추정이 실측에 여러 번 뒤집혔으니, 위 숫자도 측정 결과로 교정하시면 됩니다.
+</footer>
+
+</div>
+</body>
+</html>

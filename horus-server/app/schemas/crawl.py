@@ -288,11 +288,11 @@ class DaemonStatusResponse(BaseModel):
 
 # 🧠 GPU2 Dual 5070 Ti 8-Way 병렬 큐 & 텍스트/비전 듀얼 워커 스키마
 class TextWorkerControlRequest(BaseModel):
-    model_name: Optional[str] = Field(default="gpu2:cyankiwi/Qwen3.8-27B-AWQ-INT4", description="LLM 텍스트 모델명 (GPU2 또는 Ollama)")
+    model_name: Optional[str] = Field(default="gpu2:qwen3.8:27b", description="LLM 텍스트 모델명 (GPU2 또는 Ollama)")
     concurrency: Optional[int] = Field(default=8, ge=1, le=32, description="텍스트 NLP 동시 처리 슬롯 수")
 
 class VisionWorkerControlRequest(BaseModel):
-    model_name: Optional[str] = Field(default="gpu2:cyankiwi/Qwen3.8-27B-AWQ-INT4", description="LLM 비전 모델명")
+    model_name: Optional[str] = Field(default="gpu2:qwen3.8:27b", description="LLM 비전 모델명")
     concurrency: Optional[int] = Field(default=4, ge=1, le=32, description="비전 이미지 동시 처리 슬롯 수")
 
 class GPUConcurrencyRequest(BaseModel):
@@ -309,13 +309,13 @@ class GPUUnifiedStatusResponse(BaseModel):
     active_slots: List[Dict[str, Any]] = Field(default_factory=list, description="현재 가동 중인 병렬 슬롯별 상태 목록")
 
     text_state: str = Field(default="IDLE", description="IDLE, RUNNING, PAUSED, STOPPED")
-    text_model_name: str = "gpu2:cyankiwi/Qwen3.8-27B-AWQ-INT4"
+    text_model_name: str = "gpu2:qwen3.8:27b"
     text_pending_count: int = 0
     text_processed_count: int = 0
     text_failed_count: int = 0
 
     vision_state: str = Field(default="IDLE", description="IDLE, RUNNING, PAUSED, STOPPED")
-    vision_model_name: str = "gpu2:cyankiwi/Qwen3.8-27B-AWQ-INT4"
+    vision_model_name: str = "gpu2:qwen3.8:27b"
     vision_pending_count: int = 0
     vision_processed_count: int = 0
     vision_failed_count: int = 0
@@ -326,13 +326,13 @@ class GPUUnifiedStatusResponse(BaseModel):
     last_error_message: Optional[str] = None
 
 class LLMWorkerControlRequest(BaseModel):
-    model_name: Optional[str] = Field(default="gpu2:cyankiwi/Qwen3.8-27B-AWQ-INT4", description="LLM 모델명")
+    model_name: Optional[str] = Field(default="gpu2:qwen3.8:27b", description="LLM 모델명")
     batch_size: Optional[int] = Field(default=8, ge=1, le=32)
     interval_seconds: Optional[float] = Field(default=0.5, ge=0.1, le=60.0)
 
 class LLMWorkerStatusResponse(BaseModel):
     state: str = Field(description="IDLE, RUNNING, PAUSED, STOPPED")
-    model_name: str = "gpu2:cyankiwi/Qwen3.8-27B-AWQ-INT4"
+    model_name: str = "gpu2:qwen3.8:27b"
     batch_size: int = 8
     interval_seconds: float = 0.5
     processed_count: int = 0
